@@ -190,12 +190,6 @@ pub const Replay = struct {
         gpa.free(self.game_mode);
         gpa.free(self.environment);
         gpa.free(self.modifiers);
-        //gpa.free(self.jump_distance);
-        //gpa.free(self.left_handed);
-        //gpa.free(self.height);
-        //gpa.free(self.practice_start_time);
-        //gpa.free(self.fail_time);
-        //gpa.free(self.practice_speed);
         //gpa.free(self.frames);
         //gpa.free(self.notes);
         //gpa.free(self.walls);
@@ -219,6 +213,18 @@ fn takeFloat(reader: *std.Io.Reader) anyerror!f32 {
     return @as(f32, @bitCast(try reader.takeInt(i32, .little)));
 }
 
+fn takeInt(reader: *std.Io.Reader) anyerror!i32 {
+    return reader.takeInt(i32, .little);
+}
+
+fn takeByte(reader: *std.Io.Reader) anyerror!u8 {
+    return reader.takeByte();
+}
+
+fn takeBool(reader: *std.Io.Reader) anyerror!bool {
+    return @as(u8, @bitCast(try reader.takeByte())) != 0;
+}
+
 pub fn parseReplayFile(path: []const u8, gpa: std.mem.Allocator) anyerror!Replay {
     var file = try fs.openFileAbsolute(path, .{});
     defer file.close();
@@ -229,40 +235,43 @@ pub fn parseReplayFile(path: []const u8, gpa: std.mem.Allocator) anyerror!Replay
     var reader = file.reader(buffer);
     var replay: Replay = undefined;
 
-    replay.magic_number = try reader.interface.takeInt(i32, .little);
-    replay.file_version = try reader.interface.takeByte();
+    replay.magic_number = try takeInt(&reader.interface);
+    replay.file_version = try takeByte(&reader.interface);
 
-    if (try reader.interface.takeByte() != 0) {
+    // Info section
+    if (try takeByte(&reader.interface) != 0) {
         return error.InvalidSectionStartByte;
     }
 
-    replay.mod_version     = try takeString(&reader.interface, gpa);
-    replay.game_version    = try takeString(&reader.interface, gpa);
-    replay.timestamp       = try takeString(&reader.interface, gpa);
-    replay.player_id       = try takeString(&reader.interface, gpa);
-    replay.player_name     = try takeString(&reader.interface, gpa);
-    replay.platform        = try takeString(&reader.interface, gpa);
-    replay.tracking_system = try takeString(&reader.interface, gpa);
-    replay.hmd             = try takeString(&reader.interface, gpa);
-    replay.controller      = try takeString(&reader.interface, gpa);
-    replay.map_hash        = try takeString(&reader.interface, gpa);
-    replay.song_name       = try takeString(&reader.interface, gpa);
-    replay.mapper_name     = try takeString(&reader.interface, gpa);
-    replay.difficulty_name = try takeString(&reader.interface, gpa);
+    replay.mod_version     =     try takeString(&reader.interface, gpa);
+    replay.game_version    =     try takeString(&reader.interface, gpa);
+    replay.timestamp       =     try takeString(&reader.interface, gpa);
+    replay.player_id       =     try takeString(&reader.interface, gpa);
+    replay.player_name     =     try takeString(&reader.interface, gpa);
+    replay.platform        =     try takeString(&reader.interface, gpa);
+    replay.tracking_system =     try takeString(&reader.interface, gpa);
+    replay.hmd             =     try takeString(&reader.interface, gpa);
+    replay.controller      =     try takeString(&reader.interface, gpa);
+    replay.map_hash        =     try takeString(&reader.interface, gpa);
+    replay.song_name       =     try takeString(&reader.interface, gpa);
+    replay.mapper_name     =     try takeString(&reader.interface, gpa);
+    replay.difficulty_name =     try takeString(&reader.interface, gpa);
 
-    replay.score           = try reader.interface.takeInt(i32, .little);
+    replay.score           =     try takeInt(&reader.interface);
 
-    replay.game_mode            = try takeString(&reader.interface, gpa);
-    replay.environment     = try takeString(&reader.interface, gpa);
-    replay.modifiers       = try takeString(&reader.interface, gpa);
+    replay.game_mode       =     try takeString(&reader.interface, gpa);
+    replay.environment     =     try takeString(&reader.interface, gpa);
+    replay.modifiers       =     try takeString(&reader.interface, gpa);
 
-    replay.jump_distance = try takeFloat(&reader.interface);
-    replay.left_handed = @as(u8, @bitCast(try reader.interface.takeByte())) != 0;
-    replay.height = try takeFloat(&reader.interface);
+    replay.jump_distance =       try takeFloat(&reader.interface);
+    replay.left_handed =         try takeBool(&reader.interface);
+    replay.height =              try takeFloat(&reader.interface);
 
     replay.practice_start_time = try takeFloat(&reader.interface);
-    replay.fail_time = try takeFloat(&reader.interface);
-    replay.practice_speed = try takeFloat(&reader.interface);
+    replay.fail_time =           try takeFloat(&reader.interface);
+    replay.practice_speed =      try takeFloat(&reader.interface);
+
+    // TODO: Other sections
 
     return replay;
 }
