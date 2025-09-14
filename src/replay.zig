@@ -202,7 +202,7 @@ pub const Replay = struct {
         gpa.free(self.environment);
         gpa.free(self.modifiers);
         self.frames.deinit(gpa);
-        //gpa.free(self.notes);
+        self.notes.deinit(gpa);
         //gpa.free(self.walls);
         //gpa.free(self.heights);
         //gpa.free(self.pauses);
@@ -273,14 +273,70 @@ fn takeFrame(reader: *std.Io.Reader) !ReplayFrame {
     };
 }
 
-fn parseArray(T: type, array: *std.MultiArrayList(T), reader: *std.Io.Reader, gpa: std.mem.Allocator, parseFunction: fn (r: *std.Io.Reader) anyerror!T) !void {
-    array.* = .{};
+fn takeCutInfo(reader: *std.Io.Reader) !CutInfo {
+    return .{
+        .speed_ok = try takeBool(reader),
+        .direction_ok = try takeBool(reader),
+        .saber_type_ok = try takeBool(reader),
+        .too_soon = try takeBool(reader),
+        .saber_speed = try takeFloat(reader),
+        .saber_direction = try takeVector(reader),
+        .saber_type = @enumFromInt(try takeInt(reader)),
+        .time_deviation = try takeFloat(reader),
+        .cut_direction_deviation = try takeFloat(reader),
+        .cut_point = try takeVector(reader),
+        .cut_normal = try takeVector(reader),
+        .cut_distance_to_center = try takeFloat(reader),
+        .cut_angle = try takeFloat(reader),
+        .before_cut_rating = try takeFloat(reader),
+        .after_cut_rating = try takeFloat(reader),
+    };
+}
+
+fn takeNoteEvent(reader: *std.Io.Reader) !NoteEvent {
+    var note_info = try takeInt(reader);
+
+    const direction = @rem(note_info, 10);
+    note_info = @divTrunc(note_info, 10);
+
+    const color = @rem(note_info, 10);
+    note_info = @divTrunc(note_info, 10);
+
+    const line_layer = @rem(note_info, 10);
+    note_info = @divTrunc(note_info, 10);
+
+    const line_index = @rem(note_info, 10);
+    note_info = @divTrunc(note_info, 10);
+
+    const scoring_type = @rem(note_info, 10);
+
+    const event_time = try takeFloat(reader);
+    const spawn_time = try takeFloat(reader);
+    const event_type: EventType = @enumFromInt(try takeInt(reader));
+
+    return .{
+        .scoring_type = @enumFromInt(scoring_type),
+        .line_index = line_index,
+        .line_layer = line_layer,
+        .color = @enumFromInt(color),
+        .cut_direction = direction,
+        .event_time = event_time,
+        .spawn_time = spawn_time,
+        .event_type = event_type,
+        .cut_info = switch (event_type) { .good, .bad => try takeCutInfo(reader), else => null },
+    };
+}
+
+fn takeArray(T: type, reader: *std.Io.Reader, gpa: std.mem.Allocator, parseFunction: fn (r: *std.Io.Reader) anyerror!T) !std.MultiArrayList(T) {
+    var array: std.MultiArrayList(T) = .{};
     const capacity: usize = @intCast(try takeInt(reader));
     try array.setCapacity(gpa, capacity);
 
     for (0..capacity) |_| {
         array.appendAssumeCapacity(try parseFunction(reader));
     }
+
+    return array;
 }
 
 pub fn parseReplayFile(path: []const u8, gpa: std.mem.Allocator) !Replay {
@@ -334,15 +390,14 @@ pub fn parseReplayFile(path: []const u8, gpa: std.mem.Allocator) !Replay {
         return error.InvalidSectionStartByte;
     }
 
-    try parseArray(ReplayFrame, &replay.frames, &reader.interface, gpa, takeFrame);
+    replay.frames = try takeArray(ReplayFrame, &reader.interface, gpa, takeFrame);
 
     // Notes section
     if (try getSection(&reader.interface) != .notes) {
         return error.InvalidSectionStartByte;
     }
 
-    try parseArray(NoteEvent, *replay.notes, &reader.interface, gpa, parseNoteEvent);
-    // TODO: parseNoteEvent
+    replay.notes = try takeArray(NoteEvent, &reader.interface, gpa, takeNoteEvent);
 
     return replay;
 }
