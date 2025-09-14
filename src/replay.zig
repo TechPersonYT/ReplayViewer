@@ -273,6 +273,16 @@ fn takeFrame(reader: *std.Io.Reader) !ReplayFrame {
     };
 }
 
+fn parseArray(T: type, array: *std.MultiArrayList(T), reader: *std.Io.Reader, gpa: std.mem.Allocator, parseFunction: fn (r: *std.Io.Reader) anyerror!T) !void {
+    array.* = .{};
+    const capacity: usize = @intCast(try takeInt(reader));
+    try array.setCapacity(gpa, capacity);
+
+    for (0..capacity) |_| {
+        array.appendAssumeCapacity(try parseFunction(reader));
+    }
+}
+
 pub fn parseReplayFile(path: []const u8, gpa: std.mem.Allocator) !Replay {
     var file = try fs.openFileAbsolute(path, .{});
     defer file.close();
@@ -324,14 +334,15 @@ pub fn parseReplayFile(path: []const u8, gpa: std.mem.Allocator) !Replay {
         return error.InvalidSectionStartByte;
     }
 
-    const num_frames: u32 = @intCast(try takeInt(&reader.interface));
+    try parseArray(ReplayFrame, &replay.frames, &reader.interface, gpa, takeFrame);
 
-    replay.frames = .{};
-    try replay.frames.setCapacity(gpa, num_frames);
-
-    for (0..num_frames) |_| {
-        replay.frames.appendAssumeCapacity(try takeFrame(&reader.interface));
+    // Notes section
+    if (try getSection(&reader.interface) != .notes) {
+        return error.InvalidSectionStartByte;
     }
+
+    try parseArray(NoteEvent, *replay.notes, &reader.interface, gpa, parseNoteEvent);
+    // TODO: parseNoteEvent
 
     return replay;
 }
