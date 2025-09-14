@@ -200,7 +200,7 @@ pub const Replay = struct {
     }
 };
 
-fn takeString(reader: *std.Io.Reader, gpa: std.mem.Allocator) anyerror![]u8 {
+fn takeString(reader: *std.Io.Reader, gpa: std.mem.Allocator) ![]u8 {
     const length = @as(u32, @intCast(try reader.takeInt(i32, .little)));
     const buffer = try gpa.alloc(u8, length);
 
@@ -209,23 +209,23 @@ fn takeString(reader: *std.Io.Reader, gpa: std.mem.Allocator) anyerror![]u8 {
     return buffer;
 }
 
-fn takeFloat(reader: *std.Io.Reader) anyerror!f32 {
+fn takeFloat(reader: *std.Io.Reader) !f32 {
     return @as(f32, @bitCast(try reader.takeInt(i32, .little)));
 }
 
-fn takeInt(reader: *std.Io.Reader) anyerror!i32 {
+fn takeInt(reader: *std.Io.Reader) !i32 {
     return reader.takeInt(i32, .little);
 }
 
-fn takeByte(reader: *std.Io.Reader) anyerror!u8 {
+fn takeByte(reader: *std.Io.Reader) !u8 {
     return reader.takeByte();
 }
 
-fn takeBool(reader: *std.Io.Reader) anyerror!bool {
+fn takeBool(reader: *std.Io.Reader) !bool {
     return @as(u8, @bitCast(try reader.takeByte())) != 0;
 }
 
-pub fn parseReplayFile(path: []const u8, gpa: std.mem.Allocator) anyerror!Replay {
+pub fn parseReplayFile(path: []const u8, gpa: std.mem.Allocator) !Replay {
     var file = try fs.openFileAbsolute(path, .{});
     defer file.close();
 

@@ -2,7 +2,7 @@ const std = @import("std");
 const rl = @import("raylib");
 const rp = @import("replay.zig");
 
-pub fn main() anyerror!void {
+pub fn main() !void {
     // Initialization
     const screen_width = 1280;
     const screen_height = 720;
