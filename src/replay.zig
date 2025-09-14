@@ -3,6 +3,17 @@ const fs = @import("std").fs;
 
 const rl = @import("raylib");
 
+const ReplayFileSection = enum(u8) {
+    info,
+    frames,
+    notes,
+    walls,
+    heights,
+    pauses,
+    controller_offsets,
+    user_data,
+};
+
 pub const ReplayFrame = struct {
     time: f32,
     fps: i32,
@@ -190,7 +201,7 @@ pub const Replay = struct {
         gpa.free(self.game_mode);
         gpa.free(self.environment);
         gpa.free(self.modifiers);
-        //gpa.free(self.frames);
+        self.frames.deinit(gpa);
         //gpa.free(self.notes);
         //gpa.free(self.walls);
         //gpa.free(self.heights);
@@ -199,6 +210,10 @@ pub const Replay = struct {
         //gpa.free(self.user_data);
     }
 };
+
+fn getSection(reader: *std.Io.Reader) !ReplayFileSection {
+    return @enumFromInt(try takeByte(reader));
+}
 
 fn takeString(reader: *std.Io.Reader, gpa: std.mem.Allocator) ![]u8 {
     const length = @as(u32, @intCast(try reader.takeInt(i32, .little)));
@@ -225,6 +240,39 @@ fn takeBool(reader: *std.Io.Reader) !bool {
     return @as(u8, @bitCast(try reader.takeByte())) != 0;
 }
 
+fn takeVector(reader: *std.Io.Reader) !rl.Vector3 {
+    return .{
+        .x = try takeFloat(reader),
+        .y = try takeFloat(reader),
+        .z = try takeFloat(reader),
+    };
+}
+
+fn takeQuaternion(reader: *std.Io.Reader) !rl.Quaternion {
+    return .{
+        .x = try takeFloat(reader),
+        .y = try takeFloat(reader),
+        .z = try takeFloat(reader),
+        .w = try takeFloat(reader),
+    };
+}
+
+fn takeFrame(reader: *std.Io.Reader) !ReplayFrame {
+    return .{
+        .time = try takeFloat(reader),
+        .fps = try takeInt(reader),
+
+        .head_position = try takeVector(reader),
+        .head_rotation = try takeQuaternion(reader),
+
+        .left_hand_position = try takeVector(reader),
+        .left_hand_rotation = try takeQuaternion(reader),
+
+        .right_hand_position = try takeVector(reader),
+        .right_hand_rotation = try takeQuaternion(reader),
+    };
+}
+
 pub fn parseReplayFile(path: []const u8, gpa: std.mem.Allocator) !Replay {
     var file = try fs.openFileAbsolute(path, .{});
     defer file.close();
@@ -239,7 +287,7 @@ pub fn parseReplayFile(path: []const u8, gpa: std.mem.Allocator) !Replay {
     replay.file_version = try takeByte(&reader.interface);
 
     // Info section
-    if (try takeByte(&reader.interface) != 0) {
+    if (try getSection(&reader.interface) != .info) {
         return error.InvalidSectionStartByte;
     }
 
@@ -271,7 +319,19 @@ pub fn parseReplayFile(path: []const u8, gpa: std.mem.Allocator) !Replay {
     replay.fail_time =           try takeFloat(&reader.interface);
     replay.practice_speed =      try takeFloat(&reader.interface);
 
-    // TODO: Other sections
+    // Frames section
+    if (try getSection(&reader.interface) != .frames) {
+        return error.InvalidSectionStartByte;
+    }
+
+    const num_frames: u32 = @intCast(try takeInt(&reader.interface));
+
+    replay.frames = .{};
+    try replay.frames.setCapacity(gpa, num_frames);
+
+    for (0..num_frames) |_| {
+        replay.frames.appendAssumeCapacity(try takeFrame(&reader.interface));
+    }
 
     return replay;
 }
