@@ -105,7 +105,7 @@ pub const HeightChangeEvent = struct {
 };
 
 pub const PauseEvent = struct {
-    duration: f32,
+    duration: i64,
     time: f32,
 };
 
@@ -152,9 +152,9 @@ pub const Replay = struct {
 
     frames: std.MultiArrayList(ReplayFrame),
     notes: std.MultiArrayList(NoteEvent),
-    walls: []WallEvent,
-    heights: []HeightChangeEvent,
-    pauses: []PauseEvent,
+    walls: std.MultiArrayList(WallEvent),
+    heights: std.MultiArrayList(HeightChangeEvent),
+    pauses: std.MultiArrayList(PauseEvent),
     offsets: ?ControllerOffsets,
     user_data: ?[]u8,
 
@@ -203,11 +203,13 @@ pub const Replay = struct {
         gpa.free(self.modifiers);
         self.frames.deinit(gpa);
         self.notes.deinit(gpa);
-        //gpa.free(self.walls);
-        //gpa.free(self.heights);
-        //gpa.free(self.pauses);
-        //gpa.free(self.offsets);
-        //gpa.free(self.user_data);
+        self.walls.deinit(gpa);
+        self.heights.deinit(gpa);
+        self.pauses.deinit(gpa);
+
+        if (self.user_data) |data| {
+            gpa.free(data);
+        }
     }
 };
 
@@ -230,6 +232,10 @@ fn takeFloat(reader: *std.Io.Reader) !f32 {
 
 fn takeInt(reader: *std.Io.Reader) !i32 {
     return reader.takeInt(i32, .little);
+}
+
+fn takeLong(reader: *std.Io.Reader) !i64 {
+    return reader.takeInt(i64, .little);
 }
 
 fn takeByte(reader: *std.Io.Reader) !u8 {
@@ -327,6 +333,36 @@ fn takeNoteEvent(reader: *std.Io.Reader) !NoteEvent {
     };
 }
 
+fn takeWallEvent(reader: *std.Io.Reader) !WallEvent {
+    var wall_info = try takeInt(reader);
+
+    const line_index = @rem(wall_info, 10);
+    wall_info = @divTrunc(wall_info, 10);
+
+    const obstacle_type = @rem(wall_info, 10);
+    wall_info = @divTrunc(wall_info, 10);
+
+    const width = @rem(wall_info, 10);
+    wall_info = @divTrunc(wall_info, 10);
+
+    return .{
+        .line_index = line_index,
+        .obstacle_type = @enumFromInt(obstacle_type),
+        .width = width,
+        .energy = try takeFloat(reader),
+        .time = try takeFloat(reader),
+        .spawn_time = try takeFloat(reader),
+    };
+}
+
+fn takeHeightEvent(reader: *std.Io.Reader) !HeightChangeEvent {
+    return .{ .height = try takeFloat(reader), .time = try takeFloat(reader) };
+}
+
+fn takePauseEvent(reader: *std.Io.Reader) !PauseEvent {
+    return .{ .duration = try takeLong(reader), .time = try takeFloat(reader) };
+}
+
 fn takeArray(T: type, reader: *std.Io.Reader, gpa: std.mem.Allocator, parseFunction: fn (r: *std.Io.Reader) anyerror!T) !std.MultiArrayList(T) {
     var array: std.MultiArrayList(T) = .{};
     const capacity: usize = @intCast(try takeInt(reader));
@@ -339,6 +375,16 @@ fn takeArray(T: type, reader: *std.Io.Reader, gpa: std.mem.Allocator, parseFunct
     return array;
 }
 
+fn takeOffsets(reader: *std.Io.Reader) !ControllerOffsets {
+    return .{
+        .left_hand_offset = try takeVector(reader),
+        .left_hand_offset_rotation = try takeQuaternion(reader),
+
+        .right_hand_offset = try takeVector(reader),
+        .right_hand_offset_rotation = try takeQuaternion(reader),
+    };
+}
+
 pub fn parseReplayFile(path: []const u8, gpa: std.mem.Allocator) !Replay {
     var file = try fs.openFileAbsolute(path, .{});
     defer file.close();
@@ -348,6 +394,8 @@ pub fn parseReplayFile(path: []const u8, gpa: std.mem.Allocator) !Replay {
     defer gpa.free(buffer);
     var reader = file.reader(buffer);
     var replay: Replay = undefined;
+    replay.offsets = null;
+    replay.user_data = null;
 
     replay.magic_number = try takeInt(&reader.interface);
     replay.file_version = try takeByte(&reader.interface);
@@ -385,19 +433,61 @@ pub fn parseReplayFile(path: []const u8, gpa: std.mem.Allocator) !Replay {
     replay.fail_time =           try takeFloat(&reader.interface);
     replay.practice_speed =      try takeFloat(&reader.interface);
 
-    // Frames section
-    if (try getSection(&reader.interface) != .frames) {
-        return error.InvalidSectionStartByte;
+    inline for (.{ &replay.frames, &replay.notes, &replay.walls, &replay.heights  , &replay.pauses },
+                .{ .frames       , .notes       , .walls       , .heights         , .pauses },
+                .{ ReplayFrame   , NoteEvent    , WallEvent    , HeightChangeEvent, PauseEvent },
+                .{ takeFrame     , takeNoteEvent, takeWallEvent, takeHeightEvent  , takePauseEvent} ) |array, section, ItemType, parseFunction| {
+        if (try getSection(&reader.interface) != section) {
+            return error.InvalidSectionStartByte;
+        }
+
+        array.* = try takeArray(ItemType, &reader.interface, gpa, parseFunction);
     }
 
-    replay.frames = try takeArray(ReplayFrame, &reader.interface, gpa, takeFrame);
-
-    // Notes section
-    if (try getSection(&reader.interface) != .notes) {
-        return error.InvalidSectionStartByte;
+//    // Frames section
+//    if (try getSection(&reader.interface) != .frames) {
+//        return error.InvalidSectionStartByte;
+//    }
+//
+//    replay.frames = try takeArray(ReplayFrame, &reader.interface, gpa, takeFrame);
+//
+//    // Notes section
+//    if (try getSection(&reader.interface) != .notes) {
+//        return error.InvalidSectionStartByte;
+//    }
+//
+//    replay.notes = try takeArray(NoteEvent, &reader.interface, gpa, takeNoteEvent);
+//
+//    // Walls section
+//    if (try getSection(&reader.interface) != .walls) {
+//        return error.InvalidSectionStartByte;
+//    }
+//
+//    replay.walls = try takeArray(WallEvent, &reader.interface, gpa, takeWallEvent);
+//
+//    // Heights section
+//    if (try getSection(&reader.interface) != .heights) {
+//        return error.InvalidSectionStartByte;
+//    }
+//
+//    replay.heights = try takeArray(HeightChangeEvent, &reader.interface, gpa, takeHeightEvent);
+//
+//    // Pauses section
+//    if (try getSection(&reader.interface) != .pauses) {
+//        return error.InvalidSectionStartByte;
+//    }
+//
+//    replay.pauses = try takeArray(PauseEvent, &reader.interface, gpa, takePauseEvent);
+//
+    // Offsets section (optional)
+    if (try getSection(&reader.interface) == .controller_offsets) {
+        replay.offsets = try takeOffsets(&reader.interface);
     }
 
-    replay.notes = try takeArray(NoteEvent, &reader.interface, gpa, takeNoteEvent);
+    // User data section (optional)
+    if (try getSection(&reader.interface) == .user_data) {
+        replay.user_data = try takeString(&reader.interface, gpa);
+    }
 
     return replay;
 }
