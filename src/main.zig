@@ -10,6 +10,8 @@ const WebReplayInfo = struct {
 };
 
 fn fetchReplayInfoFromID(id: u32, gpa: std.mem.Allocator) !WebReplayInfo {
+    std.debug.print("Fetching replay info from API\n", .{});
+
     const url = try std.fmt.allocPrint(gpa, "https://api.beatleader.xyz/score/{}", .{id});
     defer gpa.free(url);
 
@@ -43,6 +45,8 @@ fn fetchReplayInfoFromID(id: u32, gpa: std.mem.Allocator) !WebReplayInfo {
 }
 
 fn downloadReplay(url: []u8, gpa: std.mem.Allocator) !rp.Replay {
+    std.debug.print("Downloading replay\n", .{});
+
     var client: std.http.Client = .{.allocator = gpa};
     defer client.deinit();
 
@@ -56,12 +60,16 @@ fn downloadReplay(url: []u8, gpa: std.mem.Allocator) !rp.Replay {
     var reader = std.Io.Reader.fixed(try response_writer.toOwnedSlice());
     defer gpa.free(reader.buffer);
 
+    std.debug.print("Parsing replay\n", .{});
+
     return rp.parseReplay(&reader, gpa);
 }
 
-fn downloadAudio(url: []u8, gpa: std.mem.Allocator) !rl.Sound {
+fn downloadMusic(url: []u8, gpa: std.mem.Allocator) !rl.Music {
     var client: std.http.Client = .{.allocator = gpa};
     defer client.deinit();
+
+    std.debug.print("Downloading map\n", .{});
 
     var response_writer = std.Io.Writer.Allocating.init(gpa);
     const response = try client.fetch(.{.method = .GET, .location = .{.url = url}, .response_writer = &response_writer.writer});
@@ -76,6 +84,7 @@ fn downloadAudio(url: []u8, gpa: std.mem.Allocator) !rl.Sound {
     try std.fs.cwd().writeFile(.{.sub_path = "the_map.zip", .data = zipped});
     try std.fs.cwd().makePath("map_extracted");
 
+    std.debug.print("Unzipping map\n", .{});
     {
         var directory = try std.fs.cwd().openDir("map_extracted", .{.iterate = true});
         defer directory.close();
@@ -90,7 +99,15 @@ fn downloadAudio(url: []u8, gpa: std.mem.Allocator) !rl.Sound {
         try std.zip.extract(directory, &reader, .{});
     }
 
-    const sound = rl.loadSound("map_extracted/song.egg");
+    std.debug.print("Converting music\n", .{});
+    const result = try std.process.Child.run(.{.allocator = gpa, .argv = &.{"ffmpeg", "-y", "-i", "map_extracted/song.egg", "song.wav"}});
+    defer gpa.free(result.stdout);
+    defer gpa.free(result.stderr);
+
+    std.debug.print("Song conversion output: '{s}\n{s}'\n", .{result.stdout, result.stderr});
+
+    std.debug.print("Loading music\n", .{});
+    const sound = rl.loadMusicStream("song.wav");
 
     try std.fs.cwd().deleteTree("map_extracted");
     try std.fs.cwd().deleteFile("the_map.zip");
@@ -126,7 +143,6 @@ pub fn main() !void {
     defer gpa_result = gpa.deinit();
 
     // Get replay
-    //var replay = try rp.parseReplayFile("/home/techperson/example_replay.bsor", allocator);
     const replay_web_info = try fetchReplayInfoFromID(26463918, allocator);
     const replay_url = replay_web_info.replay_url;
     const map_url = replay_web_info.map_url;
@@ -138,9 +154,9 @@ pub fn main() !void {
     var replay = try downloadReplay(replay_url, allocator);
     defer replay.deinit(allocator);
 
-    const audio = try downloadAudio(map_url, allocator);
-    _ = audio;
+    const music = try downloadMusic(map_url, allocator);
 
+    std.debug.print("Parsed replay info:\n", .{});
     replay.dump_info();
 
     // Keep track of current frame
@@ -165,8 +181,16 @@ pub fn main() !void {
     rl.setMaterialTexture(&left_saber_material, .albedo, left_saber_texture);
     rl.setMaterialTexture(&right_saber_material, .albedo, right_saber_texture);
 
+    rl.playMusicStream(music);
+
     // Main game loop
     while (!rl.windowShouldClose()) { // Detect window close button or ESC key
+        rl.updateMusicStream(music);
+
+        if (!rl.isMusicStreamPlaying(music)) {
+            break;
+        }
+
         // Update
         if (rl.isMouseButtonPressed(.right)) {
             rl.disableCursor();
@@ -217,7 +241,7 @@ pub fn main() !void {
             rl.drawGrid(10, 0.5);
         }
 
-        while (@as(f64, @floatCast(replay.frames.items(.time)[frame_index])) < rl.getTime()) {
+        while (@as(f64, @floatCast(replay.frames.items(.time)[frame_index])) < rl.getMusicTimePlayed(music)) {
             frame_index += 1;
         }
     }
