@@ -100,7 +100,7 @@ fn downloadMusic(url: []u8, gpa: std.mem.Allocator) !rl.Music {
     }
 
     std.debug.print("Converting music\n", .{});
-    const result = try std.process.Child.run(.{.allocator = gpa, .argv = &.{"ffmpeg", "-y", "-i", "map_extracted/song.egg", "song.wav"}});
+    const result = try std.process.Child.run(.{.allocator = gpa, .argv = &.{"bash", "-c", "ffmpeg -y -i map_extracted/*.egg song.wav"}});
     defer gpa.free(result.stdout);
     defer gpa.free(result.stderr);
 
@@ -143,7 +143,7 @@ pub fn main() !void {
     defer gpa_result = gpa.deinit();
 
     // Get replay
-    const replay_web_info = try fetchReplayInfoFromID(26463918, allocator);
+    const replay_web_info = try fetchReplayInfoFromID(14529303, allocator);
     const replay_url = replay_web_info.replay_url;
     const map_url = replay_web_info.map_url;
 
