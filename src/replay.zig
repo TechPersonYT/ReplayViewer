@@ -385,108 +385,101 @@ fn takeOffsets(reader: *std.Io.Reader) !ControllerOffsets {
     };
 }
 
-pub fn parseReplayFile(path: []const u8, gpa: std.mem.Allocator) !Replay {
-    var file = try fs.openFileAbsolute(path, .{});
-    defer file.close();
-
-    // Buffer the entire file
-    const buffer: []u8 = try gpa.alloc(u8, try file.getEndPos());
-    defer gpa.free(buffer);
-    var reader = file.reader(buffer);
+pub fn parseReplay(reader: *std.Io.Reader, gpa: std.mem.Allocator) !Replay {
     var replay: Replay = undefined;
     replay.offsets = null;
     replay.user_data = null;
 
-    replay.magic_number = try takeInt(&reader.interface);
-    replay.file_version = try takeByte(&reader.interface);
+    replay.magic_number = try takeInt(reader);
+    replay.file_version = try takeByte(reader);
 
     // Info section
-    if (try getSection(&reader.interface) != .info) {
+    if (try getSection(reader) != .info) {
         return error.InvalidSectionStartByte;
     }
 
-    replay.mod_version     =     try takeString(&reader.interface, gpa);
-    replay.game_version    =     try takeString(&reader.interface, gpa);
-    replay.timestamp       =     try takeString(&reader.interface, gpa);
-    replay.player_id       =     try takeString(&reader.interface, gpa);
-    replay.player_name     =     try takeString(&reader.interface, gpa);
-    replay.platform        =     try takeString(&reader.interface, gpa);
-    replay.tracking_system =     try takeString(&reader.interface, gpa);
-    replay.hmd             =     try takeString(&reader.interface, gpa);
-    replay.controller      =     try takeString(&reader.interface, gpa);
-    replay.map_hash        =     try takeString(&reader.interface, gpa);
-    replay.song_name       =     try takeString(&reader.interface, gpa);
-    replay.mapper_name     =     try takeString(&reader.interface, gpa);
-    replay.difficulty_name =     try takeString(&reader.interface, gpa);
+    replay.mod_version     =     try takeString(reader, gpa);
+    replay.game_version    =     try takeString(reader, gpa);
+    replay.timestamp       =     try takeString(reader, gpa);
+    replay.player_id       =     try takeString(reader, gpa);
+    replay.player_name     =     try takeString(reader, gpa);
+    replay.platform        =     try takeString(reader, gpa);
+    replay.tracking_system =     try takeString(reader, gpa);
+    replay.hmd             =     try takeString(reader, gpa);
+    replay.controller      =     try takeString(reader, gpa);
+    replay.map_hash        =     try takeString(reader, gpa);
+    replay.song_name       =     try takeString(reader, gpa);
+    replay.mapper_name     =     try takeString(reader, gpa);
+    replay.difficulty_name =     try takeString(reader, gpa);
 
-    replay.score           =     try takeInt(&reader.interface);
+    replay.score           =     try takeInt(reader);
 
-    replay.game_mode       =     try takeString(&reader.interface, gpa);
-    replay.environment     =     try takeString(&reader.interface, gpa);
-    replay.modifiers       =     try takeString(&reader.interface, gpa);
+    replay.game_mode       =     try takeString(reader, gpa);
+    replay.environment     =     try takeString(reader, gpa);
+    replay.modifiers       =     try takeString(reader, gpa);
 
-    replay.jump_distance =       try takeFloat(&reader.interface);
-    replay.left_handed =         try takeBool(&reader.interface);
-    replay.height =              try takeFloat(&reader.interface);
+    replay.jump_distance =       try takeFloat(reader);
+    replay.left_handed =         try takeBool(reader);
+    replay.height =              try takeFloat(reader);
 
-    replay.practice_start_time = try takeFloat(&reader.interface);
-    replay.fail_time =           try takeFloat(&reader.interface);
-    replay.practice_speed =      try takeFloat(&reader.interface);
+    replay.practice_start_time = try takeFloat(reader);
+    replay.fail_time =           try takeFloat(reader);
+    replay.practice_speed =      try takeFloat(reader);
 
     inline for (.{ &replay.frames, &replay.notes, &replay.walls, &replay.heights  , &replay.pauses },
                 .{ .frames       , .notes       , .walls       , .heights         , .pauses },
                 .{ ReplayFrame   , NoteEvent    , WallEvent    , HeightChangeEvent, PauseEvent },
                 .{ takeFrame     , takeNoteEvent, takeWallEvent, takeHeightEvent  , takePauseEvent} ) |array, section, ItemType, parseFunction| {
-        if (try getSection(&reader.interface) != section) {
+        if (try getSection(reader) != section) {
             return error.InvalidSectionStartByte;
         }
 
-        array.* = try takeArray(ItemType, &reader.interface, gpa, parseFunction);
+        array.* = try takeArray(ItemType, reader, gpa, parseFunction);
     }
 
 //    // Frames section
-//    if (try getSection(&reader.interface) != .frames) {
+//    if (try getSection(reader) != .frames) {
 //        return error.InvalidSectionStartByte;
 //    }
 //
-//    replay.frames = try takeArray(ReplayFrame, &reader.interface, gpa, takeFrame);
+//    replay.frames = try takeArray(ReplayFrame, reader, gpa, takeFrame);
 //
 //    // Notes section
-//    if (try getSection(&reader.interface) != .notes) {
+//    if (try getSection(reader) != .notes) {
 //        return error.InvalidSectionStartByte;
 //    }
 //
-//    replay.notes = try takeArray(NoteEvent, &reader.interface, gpa, takeNoteEvent);
+//    replay.notes = try takeArray(NoteEvent, reader, gpa, takeNoteEvent);
 //
 //    // Walls section
-//    if (try getSection(&reader.interface) != .walls) {
+//    if (try getSection(reader) != .walls) {
 //        return error.InvalidSectionStartByte;
 //    }
 //
-//    replay.walls = try takeArray(WallEvent, &reader.interface, gpa, takeWallEvent);
+//    replay.walls = try takeArray(WallEvent, reader, gpa, takeWallEvent);
 //
 //    // Heights section
-//    if (try getSection(&reader.interface) != .heights) {
+//    if (try getSection(reader) != .heights) {
 //        return error.InvalidSectionStartByte;
 //    }
 //
-//    replay.heights = try takeArray(HeightChangeEvent, &reader.interface, gpa, takeHeightEvent);
+//    replay.heights = try takeArray(HeightChangeEvent, reader, gpa, takeHeightEvent);
 //
 //    // Pauses section
-//    if (try getSection(&reader.interface) != .pauses) {
+//    if (try getSection(reader) != .pauses) {
 //        return error.InvalidSectionStartByte;
 //    }
 //
-//    replay.pauses = try takeArray(PauseEvent, &reader.interface, gpa, takePauseEvent);
+//    replay.pauses = try takeArray(PauseEvent, reader, gpa, takePauseEvent);
 //
     // Offsets section (optional)
-    if (try getSection(&reader.interface) == .controller_offsets) {
-        replay.offsets = try takeOffsets(&reader.interface);
+    if (try getSection(reader) == .controller_offsets) {
+        replay.offsets = try takeOffsets(reader);
     }
 
     // User data section (optional)
-    if (try getSection(&reader.interface) == .user_data) {
-        replay.user_data = try takeString(&reader.interface, gpa);
+    if (try getSection(reader) == .user_data) {
+        replay.user_data = try takeString(reader, gpa);
     }
 
     return replay;
