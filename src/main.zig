@@ -234,7 +234,7 @@ pub fn main() !void {
     defer gpa_result = gpa.deinit();
 
     // Get replay
-    const replay_web_info = try fetchReplayInfoFromID(17710450, allocator);
+    const replay_web_info = try fetchReplayInfoFromID(25892187, allocator);
     const replay_url = replay_web_info.replay_url;
     const map_url = replay_web_info.map_url;
 
@@ -441,7 +441,7 @@ pub fn main() !void {
         try drawLineGraph(0, 0, 400, 200, y_min, y_max, right_hand_angles[1..], .blue, 2, .white, false, allocator);
 
         var buffer: [4096]u8 = undefined;
-        const text = try std.fmt.bufPrintZ(&buffer, "Player name: {s}\nHeadset: {s}\nMap: {s} ({s})\nMapped by: \nJ/D: {}\nHeight: {}\nFrame: {}\nTotal frames: {}", .{replay.player_name, replay.hmd, replay.song_name, replay.mapper_name, replay.jump_distance, replay.height, frame_index, replay.frames.len});
+        const text = try std.fmt.bufPrintZ(&buffer, "Player name: {s}\nHeadset: {s}\nMap: {s} ({s})\nMapped by: {}\nJ/D: {}\nHeight: {}\nFrame: {}\nTotal frames: {}", .{replay.player_name, replay.hmd, replay.song_name, replay.mapper_name, replay.jump_distance, replay.height, frame_index, replay.frames.len});
         rl.drawText(text, 0, 210, 24, .white);
 
         rl.drawFPS(0, 0);
