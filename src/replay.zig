@@ -37,6 +37,12 @@ pub const ScoringType = enum {
     slider_tail,
     burst_slider_head,
     burst_slider_element,
+
+    other,
+    scoring,
+    types,
+    i,
+    guess,
 };
 
 pub const EventType = enum {
@@ -54,10 +60,6 @@ pub const SaberType = enum(i32) {
 pub const NoteColor = enum(i32) {
     red = 0,
     blue = 1,
-};
-
-pub const ObstacleType = enum(i32) {
-    // ???
 };
 
 pub const CutInfo = struct {
@@ -92,7 +94,7 @@ pub const NoteEvent = struct {
 
 pub const WallEvent = struct {
     line_index: i32,
-    obstacle_type: ObstacleType,
+    obstacle_type: i32,
     width: i32,
     energy: f32,
     time: f32,
@@ -247,11 +249,14 @@ fn takeBool(reader: *std.Io.Reader) !bool {
 }
 
 fn takeVector(reader: *std.Io.Reader) !rl.Vector3 {
-    return .{
+    const FLIP = rl.Matrix.scale(1.0, 1.0, -1.0);
+    const v = rl.Vector3{
         .x = try takeFloat(reader),
         .y = try takeFloat(reader),
         .z = try takeFloat(reader),
     };
+
+    return v.transform(FLIP);
 }
 
 fn takeQuaternion(reader: *std.Io.Reader) !rl.Quaternion {
@@ -347,7 +352,7 @@ fn takeWallEvent(reader: *std.Io.Reader) !WallEvent {
 
     return .{
         .line_index = line_index,
-        .obstacle_type = @enumFromInt(obstacle_type),
+        .obstacle_type = obstacle_type,
         .width = width,
         .energy = try takeFloat(reader),
         .time = try takeFloat(reader),
@@ -383,6 +388,17 @@ fn takeOffsets(reader: *std.Io.Reader) !ControllerOffsets {
         .right_hand_offset = try takeVector(reader),
         .right_hand_offset_rotation = try takeQuaternion(reader),
     };
+}
+
+pub fn parseReplayFile(filename: []const u8, gpa: std.mem.Allocator) !Replay {
+    const file = try std.fs.cwd().openFile(filename, .{});
+
+    const buffer = try gpa.alloc(u8, try file.getEndPos() + 1);
+    defer gpa.free(buffer);
+
+    var reader = file.reader(buffer).interface;
+
+    return parseReplay(&reader, gpa);
 }
 
 pub fn parseReplay(reader: *std.Io.Reader, gpa: std.mem.Allocator) !Replay {
