@@ -5,10 +5,30 @@ const rp = @import("replay.zig");
 const FORWARD: rl.Vector3 = .{.x = 0.0, .y = 0.0, .z = 1.0};
 const ONE: rl.Vector3 = .{.x = 1.0, .y = 1.0, .z = 1.0};
 
+fn getHSVColor(score: i64) rl.Color {
+    if (score >= 115) {
+        return .white;
+    } else if (score >= 113) {
+        return .init(133, 0, 255, 255);
+    } else if (score >= 110) {
+        return .init(0, 163, 255, 255);
+    } else if (score >= 106) {
+        return .init(0, 255, 0, 255);
+    } else if (score >= 100) {
+        return .init(255, 255, 0, 255);
+    } else {
+        return .init(255, 0, 56, 255);
+    }
+}
+
 const WebReplayInfo = struct {
     replay_url: []u8,
     map_url: []u8,
 };
+
+fn easeOutQuart(x: f32) f32 {
+    return 1.0 - std.math.pow(f32, 1.0 - x, 4.0);
+}
 
 fn fetchReplayInfoFromID(id: u32, gpa: std.mem.Allocator) !WebReplayInfo {
     std.debug.print("Fetching replay info from API\n", .{});
@@ -272,6 +292,10 @@ pub fn main() !void {
 
             // Sync frame with replay time
             while (@as(f64, @floatCast(replay.frames.items(.time)[frame_index])) < replay_time) {
+                if (frame_index >= replay.frames.len - 1) {
+                    break;
+                }
+
                 frame_index += 1;
             }
 
@@ -294,6 +318,59 @@ pub fn main() !void {
             transform_info = computeAllForms(interpolated_frame.right_hand_position, interpolated_frame.right_hand_rotation);
             rl.drawMesh(saber_hilt_mesh, right_saber_material, transform_info.transform);
             rl.drawLine3D(transform_info.position, transform_info.position.add(transform_info.direction.scale(2)), .blue);
+
+            // Draw cut points for note events
+            const lookahead: f64 = 2.0;
+            const lookbehind: f64 = 1.0;
+            for (replay.notes.items(.event_time), replay.notes.items(.spawn_time), replay.notes.items(.cut_info), replay.notes.items(.color)) |event_time, spawn_time, cut_info, color| {
+                if (event_time < replay_time - lookbehind) {
+                    continue;
+                }
+
+                if (event_time > replay_time + lookahead) {
+                    break;
+                }
+
+                _ = spawn_time;
+
+                if (cut_info) |info| {
+                    const sphere_color: rl.Color = switch (color) {.red => .red, .blue => .blue};
+
+                    const total_animation_time = @max(0.0, @min(1.0, 10.0 / info.saber_speed));
+                    const animation_start_time = event_time - total_animation_time;
+                    const time_to_animation = animation_start_time - replay_time;
+
+                    if (time_to_animation > 0.0) {
+                        continue;
+                    }
+
+                    var animation_progress = rl.math.remap(@floatCast(replay_time), animation_start_time, event_time, 0.0, 1.0);
+
+                    // Postcut animation
+                    if (animation_progress > 1.0) {
+                        const animation_end_time = event_time + total_animation_time;
+                        animation_progress = rl.math.remap(@floatCast(replay_time), event_time, animation_end_time, 0.0, 1.0);
+
+                        const fade_color: rl.Color = .init(255, 255, 255, @as(u8, @intFromFloat(std.math.clamp(255.0 - animation_progress * 255.0, 0.0, 255.0))));
+                        const score: i32 = @intFromFloat(std.math.clamp(70.0 * info.before_cut_rating, 0.0, 70.0) + std.math.clamp(30.0 * info.after_cut_rating, 0.0, 30.0) + std.math.clamp((1.0 - std.math.clamp(info.cut_distance_to_center / 0.3, 0.0, 1.0)) * 15.0, 0.0, 15.0));
+                        var score_color = getHSVColor(score);
+                        score_color.a = fade_color.a;
+
+                        const point = rl.Vector3.lerp(info.cut_point, info.cut_point.add(info.saber_direction.scale(info.saber_speed / 15.0)), animation_progress);
+                        rl.drawSphere(point, (1.0 - animation_progress) * 0.08, fade_color);
+
+                        camera.end();
+                        defer camera.begin();
+
+                        const screen_space_point = rl.getWorldToScreen(point, camera);
+
+                        rl.drawText(rl.textFormat("%03i", .{score}), @as(i32, @intFromFloat(screen_space_point.x)), @as(i32, @intFromFloat(screen_space_point.y)), 25, score_color);
+                    } else {
+                        const point = rl.Vector3.lerp(info.cut_point.subtract(info.cut_normal), info.cut_point, animation_progress);
+                        rl.drawSphere(point, @min(0.08, animation_progress * 0.08), sphere_color);
+                    }
+                }
+            }
 
             rl.drawGrid(10, 0.5);
         }
