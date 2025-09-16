@@ -350,8 +350,9 @@ pub fn main() !void {
                     if (animation_progress > 1.0) {
                         const animation_end_time = event_time + total_animation_time;
                         animation_progress = rl.math.remap(@floatCast(replay_time), event_time, animation_end_time, 0.0, 1.0);
+                        const fade_progress = rl.math.remap(@floatCast(replay_time), event_time, @floatCast(event_time + lookbehind), 0.0, 1.0);
 
-                        const fade_color: rl.Color = .init(255, 255, 255, @as(u8, @intFromFloat(std.math.clamp(255.0 - animation_progress * 255.0, 0.0, 255.0))));
+                        const fade_color: rl.Color = .init(255, 255, 255, @as(u8, @intFromFloat(std.math.clamp(255.0 - fade_progress * 255.0, 0.0, 255.0))));
                         const score: i32 = @intFromFloat(std.math.clamp(70.0 * info.before_cut_rating, 0.0, 70.0) + std.math.clamp(30.0 * info.after_cut_rating, 0.0, 30.0) + std.math.clamp((1.0 - std.math.clamp(info.cut_distance_to_center / 0.3, 0.0, 1.0)) * 15.0, 0.0, 15.0));
                         var score_color = getHSVColor(score);
                         score_color.a = fade_color.a;
