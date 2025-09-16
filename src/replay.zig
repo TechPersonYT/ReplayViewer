@@ -60,6 +60,11 @@ pub const SaberType = enum(i32) {
 pub const NoteColor = enum(i32) {
     red = 0,
     blue = 1,
+
+    others,
+    maybe,
+    possibly,
+    i_guess,
 };
 
 pub const CutInfo = struct {
@@ -249,14 +254,11 @@ fn takeBool(reader: *std.Io.Reader) !bool {
 }
 
 fn takeVector(reader: *std.Io.Reader) !rl.Vector3 {
-    const FLIP = rl.Matrix.scale(1.0, 1.0, -1.0);
-    const v = rl.Vector3{
+    return .{
         .x = try takeFloat(reader),
         .y = try takeFloat(reader),
         .z = try takeFloat(reader),
     };
-
-    return v.transform(FLIP);
 }
 
 fn takeQuaternion(reader: *std.Io.Reader) !rl.Quaternion {
@@ -489,12 +491,12 @@ pub fn parseReplay(reader: *std.Io.Reader, gpa: std.mem.Allocator) !Replay {
 //    replay.pauses = try takeArray(PauseEvent, reader, gpa, takePauseEvent);
 //
     // Offsets section (optional)
-    if (try getSection(reader) == .controller_offsets) {
+    if (getSection(reader) catch .frames == .controller_offsets) {
         replay.offsets = try takeOffsets(reader);
     }
 
     // User data section (optional)
-    if (try getSection(reader) == .user_data) {
+    if (getSection(reader) catch .frames == .user_data) {
         replay.user_data = try takeString(reader, gpa);
     }
 

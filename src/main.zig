@@ -5,6 +5,8 @@ const rp = @import("replay.zig");
 const FORWARD: rl.Vector3 = .{.x = 0.0, .y = 0.0, .z = 1.0};
 const ONE: rl.Vector3 = .{.x = 1.0, .y = 1.0, .z = 1.0};
 
+const GRAPH_SAMPLE_SIZE: usize = 100;
+
 fn getHSVColor(score: i64) rl.Color {
     if (score >= 115) {
         return .white;
@@ -178,10 +180,36 @@ fn interpolateFrames(a: *const rp.ReplayFrame, b: *const rp.ReplayFrame, time: f
     };
 }
 
+fn drawLineGraph(x: i32, y: i32, width: i32, height: i32, min_y: f32, max_y: f32, values: []f32, line_color: rl.Color, border_width: f32, border_color: rl.Color, zero_line: bool, gpa: std.mem.Allocator) !void {
+    // Draw border
+    //rl.drawRectangleLinesEx(.init(@floatFromInt(x), @floatFromInt(y), @floatFromInt(width), @floatFromInt(height)), border_width, border_color);
+    _ = border_width;
+    _ = border_color;
+
+    // Draw zero line
+    if (zero_line) {
+        const zero: i32 = @intFromFloat(rl.math.remap(0, min_y, max_y, 0, @floatFromInt(height)));
+        rl.drawLine(0, zero, width, zero, .gray);
+    }
+
+    var points: []rl.Vector2 = try gpa.alloc(rl.Vector2, values.len);
+    defer gpa.free(points);
+
+    for (0..values.len, values) |xp, yp| {
+        points[xp] = .init(rl.math.remap(@floatFromInt(xp), 0, @floatFromInt(values.len - 1), @floatFromInt(x), @floatFromInt(x + width)),
+                           rl.math.remap(yp, min_y, max_y, @floatFromInt(y), @floatFromInt(y + height)));
+    }
+
+    // Draw graph
+    rl.drawLineStrip(points, line_color);
+}
+
 pub fn main() !void {
+    const FLIP = rl.Matrix.scale(-1.0, 1.0, 1.0);
+
     // Initialization
-    const screen_width = 1280;
-    const screen_height = 720;
+    const screen_width = 1600;
+    const screen_height = 900;
 
     rl.initWindow(screen_width, screen_height, "Beat Leader Replay Viewer (Prototype)");
     defer rl.closeWindow(); // Close window and OpenGL context
@@ -206,7 +234,7 @@ pub fn main() !void {
     defer gpa_result = gpa.deinit();
 
     // Get replay
-    const replay_web_info = try fetchReplayInfoFromID(14529303, allocator);
+    const replay_web_info = try fetchReplayInfoFromID(17710450, allocator);
     const replay_url = replay_web_info.replay_url;
     const map_url = replay_web_info.map_url;
 
@@ -215,9 +243,11 @@ pub fn main() !void {
     defer allocator.free(map_url);
 
     var replay = try downloadReplay(replay_url, allocator);
+    //var replay = try rp.parseReplayFile("replay.bsor", allocator);
     defer replay.deinit(allocator);
 
     const music = try downloadMusic(map_url, allocator);
+    //const music = try rl.loadMusicStream("song.wav");
 
     std.debug.print("Parsed replay info:\n", .{});
     replay.dump_info();
@@ -311,13 +341,13 @@ pub fn main() !void {
 
             // Left hand
             transform_info = computeAllForms(interpolated_frame.left_hand_position, interpolated_frame.left_hand_rotation);
-            rl.drawMesh(saber_hilt_mesh, left_saber_material, transform_info.transform);
-            rl.drawLine3D(transform_info.position, transform_info.position.add(transform_info.direction.scale(2)), .red);
+            rl.drawMesh(saber_hilt_mesh, left_saber_material, transform_info.transform.multiply(FLIP));
+            rl.drawLine3D(transform_info.position.transform(FLIP), transform_info.position.transform(FLIP).add(transform_info.direction.transform(FLIP).scale(1.5)), .red);
 
             // Right hand
             transform_info = computeAllForms(interpolated_frame.right_hand_position, interpolated_frame.right_hand_rotation);
-            rl.drawMesh(saber_hilt_mesh, right_saber_material, transform_info.transform);
-            rl.drawLine3D(transform_info.position, transform_info.position.add(transform_info.direction.scale(2)), .blue);
+            rl.drawMesh(saber_hilt_mesh, right_saber_material, transform_info.transform.multiply(FLIP));
+            rl.drawLine3D(transform_info.position.transform(FLIP), transform_info.position.transform(FLIP).add(transform_info.direction.transform(FLIP).scale(1.5)), .blue);
 
             // Draw cut points for note events
             const lookahead: f64 = 2.0;
@@ -334,7 +364,7 @@ pub fn main() !void {
                 _ = spawn_time;
 
                 if (cut_info) |info| {
-                    const sphere_color: rl.Color = switch (color) {.red => .red, .blue => .blue};
+                    const sphere_color: rl.Color = switch (color) {.red => .red, else => .blue};
 
                     const total_animation_time = @max(0.0, @min(1.0, 10.0 / info.saber_speed));
                     const animation_start_time = event_time - total_animation_time;
@@ -358,17 +388,19 @@ pub fn main() !void {
                         score_color.a = fade_color.a;
 
                         const point = rl.Vector3.lerp(info.cut_point, info.cut_point.add(info.saber_direction.scale(info.saber_speed / 15.0)), animation_progress);
-                        rl.drawSphere(point, (1.0 - animation_progress) * 0.08, fade_color);
+                        rl.drawSphere(point.transform(FLIP), @max(0.0, 1.0 - animation_progress) * 0.08, fade_color);
 
                         camera.end();
                         defer camera.begin();
 
-                        const screen_space_point = rl.getWorldToScreen(point, camera);
+                        const screen_space_point = rl.getWorldToScreen(point.transform(FLIP), camera);
 
-                        rl.drawText(rl.textFormat("%03i", .{score}), @as(i32, @intFromFloat(screen_space_point.x)), @as(i32, @intFromFloat(screen_space_point.y)), 25, score_color);
+                        if (std.math.isNormal(screen_space_point.x) and std.math.isNormal(screen_space_point.y) and @abs(screen_space_point.x) < @as(f64, @floatFromInt(std.math.maxInt(i32))) and @abs(screen_space_point.y) < @as(f64, @floatFromInt(std.math.maxInt(i32)))) {
+                            rl.drawText(rl.textFormat("%03i", .{score}), @as(i32, @intFromFloat(screen_space_point.x)), @as(i32, @intFromFloat(screen_space_point.y)), 25, score_color);
+                        }
                     } else {
                         const point = rl.Vector3.lerp(info.cut_point.subtract(info.cut_normal), info.cut_point, animation_progress);
-                        rl.drawSphere(point, @min(0.08, animation_progress * 0.08), sphere_color);
+                        rl.drawSphere(point.transform(FLIP), @min(0.08, animation_progress * 0.08), sphere_color);
                     }
                 }
             }
@@ -376,7 +408,42 @@ pub fn main() !void {
             rl.drawGrid(10, 0.5);
         }
 
+        const y_min = 3.0;
+        const y_max = 5.0;
+
+        var axis: rl.Vector3 = undefined;
+        var angle: f32 = undefined;
+
+        const forward_quaternion = rl.Quaternion.fromVector3ToVector3(.init(0, 0, 0), FORWARD);
+
+        // Left hand motion
+        var left_hand_angles: [GRAPH_SAMPLE_SIZE]f32 = .{0.0} ** GRAPH_SAMPLE_SIZE;
+        var last_rotation = replay.frames.items(.left_hand_rotation)[0];
+
+        for (1.., replay.frames.items(.left_hand_rotation)[@intCast(@max(1, @as(i64, @intCast(frame_index)) - GRAPH_SAMPLE_SIZE + 1))..frame_index]) |i, rotation| {
+            rotation.subtract(forward_quaternion).toAxisAngle(&axis, &angle);
+            left_hand_angles[i] = angle;
+            last_rotation = rotation;
+        }
+
+        try drawLineGraph(0, 0, 400, 200, y_min + 1.0, y_max + 1.0, left_hand_angles[1..], .red, 2, .white, false, allocator);
+
+        // Right hand motion
+        var right_hand_angles: [GRAPH_SAMPLE_SIZE]f32 = .{0.0} ** GRAPH_SAMPLE_SIZE;
+        last_rotation = replay.frames.items(.right_hand_rotation)[0];
+
+        for (1.., replay.frames.items(.right_hand_rotation)[@intCast(@max(1, @as(i64, @intCast(frame_index)) - GRAPH_SAMPLE_SIZE + 1))..frame_index]) |i, rotation| {
+            rotation.subtract(forward_quaternion).toAxisAngle(&axis, &angle);
+            right_hand_angles[i] = angle;
+            last_rotation = rotation;
+        }
+
+        try drawLineGraph(0, 0, 400, 200, y_min, y_max, right_hand_angles[1..], .blue, 2, .white, false, allocator);
+
+        var buffer: [4096]u8 = undefined;
+        const text = try std.fmt.bufPrintZ(&buffer, "Player name: {s}\nHeadset: {s}\nMap: {s} ({s})\nMapped by: \nJ/D: {}\nHeight: {}\nFrame: {}\nTotal frames: {}", .{replay.player_name, replay.hmd, replay.song_name, replay.mapper_name, replay.jump_distance, replay.height, frame_index, replay.frames.len});
+        rl.drawText(text, 0, 210, 24, .white);
+
         rl.drawFPS(0, 0);
     }
 }
-
