@@ -6,6 +6,7 @@ const FORWARD: rl.Vector3 = .{.x = 0.0, .y = 0.0, .z = 1.0};
 const ONE: rl.Vector3 = .{.x = 1.0, .y = 1.0, .z = 1.0};
 
 const GRAPH_SAMPLE_SIZE: usize = 100;
+const CUBE_SIZE: f32 = 0.4;
 
 fn getHSVColor(score: i64) rl.Color {
     if (score >= 115) {
@@ -246,8 +247,8 @@ pub fn main() !void {
     //var replay = try rp.parseReplayFile("replay.bsor", allocator);
     defer replay.deinit(allocator);
 
-    const music = try downloadMusic(map_url, allocator);
-    //const music = try rl.loadMusicStream("song.wav");
+    //const music = try downloadMusic(map_url, allocator);
+    const music = try rl.loadMusicStream("song.wav");
 
     std.debug.print("Parsed replay info:\n", .{});
     replay.dump_info();
@@ -352,7 +353,7 @@ pub fn main() !void {
             // Draw cut points for note events
             const lookahead: f64 = 2.0;
             const lookbehind: f64 = 1.0;
-            for (replay.notes.items(.event_time), replay.notes.items(.spawn_time), replay.notes.items(.cut_info), replay.notes.items(.color)) |event_time, spawn_time, cut_info, color| {
+            for (replay.notes.items(.event_time), replay.notes.items(.spawn_time), replay.notes.items(.line_index), replay.notes.items(.line_layer), replay.notes.items(.cut_info), replay.notes.items(.color)) |event_time, spawn_time, line_index, line_layer, cut_info, color| {
                 if (event_time < replay_time - lookbehind) {
                     continue;
                 }
@@ -361,11 +362,22 @@ pub fn main() !void {
                     break;
                 }
 
-                _ = spawn_time;
+                const note_color: rl.Color = switch (color) {.red => .red, else => .blue};
+                const line_index_f: f32 = @floatFromInt(2 - line_index);
+                const line_layer_f: f32 = @floatFromInt(line_layer);
+
+                const time_distance_offset: f32 = (spawn_time - @as(f32, @floatCast(replay_time))) * replay.jump_distance;
+                const note_position: rl.Vector3 = .init(line_index_f / 2.0, replay.height + line_layer_f / 2.0 - 1.0, time_distance_offset);
+
+                if (replay_time < event_time) {
+                    rl.drawCubeWiresV(note_position, .init(CUBE_SIZE, CUBE_SIZE, CUBE_SIZE), note_color);
+                }
 
                 if (cut_info) |info| {
-                    const sphere_color: rl.Color = switch (color) {.red => .red, else => .blue};
+                    const timed_cut_point = rl.Vector3.init(info.cut_point.x, info.cut_point.y, time_distance_offset);
+                    _ = timed_cut_point;
 
+                    // Cut point fly-in animation
                     const total_animation_time = @max(0.0, @min(1.0, 10.0 / info.saber_speed));
                     const animation_start_time = event_time - total_animation_time;
                     const time_to_animation = animation_start_time - replay_time;
@@ -388,19 +400,17 @@ pub fn main() !void {
                         score_color.a = fade_color.a;
 
                         const point = rl.Vector3.lerp(info.cut_point, info.cut_point.add(info.saber_direction.scale(info.saber_speed / 15.0)), animation_progress);
-                        rl.drawSphere(point.transform(FLIP), @max(0.0, 1.0 - animation_progress) * 0.08, fade_color);
+                        const scale = @max(0.0, 1.0 - animation_progress) * CUBE_SIZE;
+                        rl.drawCubeV(point.transform(FLIP), .init(scale, scale, scale), score_color);
 
                         camera.end();
                         defer camera.begin();
 
-                        const screen_space_point = rl.getWorldToScreen(point.transform(FLIP), camera);
+                        const screen_space_point = rl.getWorldToScreen(.init(note_position.x, note_position.y, info.cut_point.transform(FLIP).z), camera);
 
                         if (std.math.isNormal(screen_space_point.x) and std.math.isNormal(screen_space_point.y) and @abs(screen_space_point.x) < @as(f64, @floatFromInt(std.math.maxInt(i32))) and @abs(screen_space_point.y) < @as(f64, @floatFromInt(std.math.maxInt(i32)))) {
                             rl.drawText(rl.textFormat("%03i", .{score}), @as(i32, @intFromFloat(screen_space_point.x)), @as(i32, @intFromFloat(screen_space_point.y)), 25, score_color);
                         }
-                    } else {
-                        const point = rl.Vector3.lerp(info.cut_point.subtract(info.cut_normal), info.cut_point, animation_progress);
-                        rl.drawSphere(point.transform(FLIP), @min(0.08, animation_progress * 0.08), sphere_color);
                     }
                 }
             }
@@ -441,7 +451,7 @@ pub fn main() !void {
         try drawLineGraph(0, 0, 400, 200, y_min, y_max, right_hand_angles[1..], .blue, 2, .white, false, allocator);
 
         var buffer: [4096]u8 = undefined;
-        const text = try std.fmt.bufPrintZ(&buffer, "Player name: {s}\nHeadset: {s}\nMap: {s} ({s})\nMapped by: {}\nJ/D: {}\nHeight: {}\nFrame: {}\nTotal frames: {}", .{replay.player_name, replay.hmd, replay.song_name, replay.mapper_name, replay.jump_distance, replay.height, frame_index, replay.frames.len});
+        const text = try std.fmt.bufPrintZ(&buffer, "Player name: {s}\nHeadset: {s}\nMap: {s} ({s})\nMapped by: {s}\nJ/D: {}\nHeight: {}\nFrame: {}\nTotal frames: {}", .{replay.player_name, replay.hmd, replay.song_name, replay.difficulty_name, replay.mapper_name, replay.jump_distance, replay.height, frame_index, replay.frames.len});
         rl.drawText(text, 0, 210, 24, .white);
 
         rl.drawFPS(0, 0);
