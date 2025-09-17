@@ -2,8 +2,8 @@ const std = @import("std");
 const rl = @import("raylib");
 const rp = @import("replay.zig");
 
-const FORWARD: rl.Vector3 = .{.x = 0.0, .y = 0.0, .z = 1.0};
-const ONE: rl.Vector3 = .{.x = 1.0, .y = 1.0, .z = 1.0};
+const FORWARD: rl.Vector3 = .{ .x = 0.0, .y = 0.0, .z = 1.0 };
+const ONE: rl.Vector3 = .{ .x = 1.0, .y = 1.0, .z = 1.0 };
 
 const GRAPH_SAMPLE_SIZE: usize = 100;
 const CUBE_SIZE: f32 = 0.4;
@@ -39,13 +39,13 @@ fn fetchReplayInfoFromID(id: u32, gpa: std.mem.Allocator) !WebReplayInfo {
     const url = try std.fmt.allocPrint(gpa, "https://api.beatleader.xyz/score/{}", .{id});
     defer gpa.free(url);
 
-    var client: std.http.Client = .{.allocator = gpa};
+    var client: std.http.Client = .{ .allocator = gpa };
     defer client.deinit();
 
     var response_writer = std.Io.Writer.Allocating.init(gpa);
     defer response_writer.deinit();
 
-    const response = try client.fetch(.{.method = .GET, .location = .{.url = url}, .response_writer = &response_writer.writer});
+    const response = try client.fetch(.{ .method = .GET, .location = .{ .url = url }, .response_writer = &response_writer.writer });
 
     if (response.status != .ok) {
         return error.HTTP;
@@ -65,17 +65,17 @@ fn fetchReplayInfoFromID(id: u32, gpa: std.mem.Allocator) !WebReplayInfo {
     const owned_map_url = try gpa.alloc(u8, map_url.len);
     @memcpy(owned_map_url, map_url);
 
-    return .{.replay_url = owned_replay_url, .map_url = owned_map_url};
+    return .{ .replay_url = owned_replay_url, .map_url = owned_map_url };
 }
 
 fn downloadReplay(url: []u8, gpa: std.mem.Allocator) !rp.Replay {
     std.debug.print("Downloading replay\n", .{});
 
-    var client: std.http.Client = .{.allocator = gpa};
+    var client: std.http.Client = .{ .allocator = gpa };
     defer client.deinit();
 
     var response_writer = std.Io.Writer.Allocating.init(gpa);
-    const response = try client.fetch(.{.method = .GET, .location = .{.url = url}, .response_writer = &response_writer.writer});
+    const response = try client.fetch(.{ .method = .GET, .location = .{ .url = url }, .response_writer = &response_writer.writer });
 
     if (response.status != .ok) {
         return error.HTTP;
@@ -90,13 +90,13 @@ fn downloadReplay(url: []u8, gpa: std.mem.Allocator) !rp.Replay {
 }
 
 fn downloadMusic(url: []u8, gpa: std.mem.Allocator) !rl.Music {
-    var client: std.http.Client = .{.allocator = gpa};
+    var client: std.http.Client = .{ .allocator = gpa };
     defer client.deinit();
 
     std.debug.print("Downloading map\n", .{});
 
     var response_writer = std.Io.Writer.Allocating.init(gpa);
-    const response = try client.fetch(.{.method = .GET, .location = .{.url = url}, .response_writer = &response_writer.writer});
+    const response = try client.fetch(.{ .method = .GET, .location = .{ .url = url }, .response_writer = &response_writer.writer });
 
     if (response.status != .ok) {
         return error.HTTP;
@@ -105,12 +105,12 @@ fn downloadMusic(url: []u8, gpa: std.mem.Allocator) !rl.Music {
     const zipped = try response_writer.toOwnedSlice();
     defer gpa.free(zipped);
 
-    try std.fs.cwd().writeFile(.{.sub_path = "the_map.zip", .data = zipped});
+    try std.fs.cwd().writeFile(.{ .sub_path = "the_map.zip", .data = zipped });
     try std.fs.cwd().makePath("map_extracted");
 
     std.debug.print("Unzipping map\n", .{});
     {
-        var directory = try std.fs.cwd().openDir("map_extracted", .{.iterate = true});
+        var directory = try std.fs.cwd().openDir("map_extracted", .{ .iterate = true });
         defer directory.close();
 
         const song_file = try std.fs.cwd().openFile("the_map.zip", .{});
@@ -124,11 +124,11 @@ fn downloadMusic(url: []u8, gpa: std.mem.Allocator) !rl.Music {
     }
 
     std.debug.print("Converting music\n", .{});
-    const result = try std.process.Child.run(.{.allocator = gpa, .argv = &.{"bash", "-c", "ffmpeg -y -i map_extracted/*.egg song.wav"}});
+    const result = try std.process.Child.run(.{ .allocator = gpa, .argv = &.{ "bash", "-c", "ffmpeg -y -i map_extracted/*.egg song.wav" } });
     defer gpa.free(result.stdout);
     defer gpa.free(result.stderr);
 
-    std.debug.print("Song conversion output: '{s}\n{s}'\n", .{result.stdout, result.stderr});
+    std.debug.print("Song conversion output: '{s}\n{s}'\n", .{ result.stdout, result.stderr });
 
     std.debug.print("Loading music\n", .{});
     const sound = rl.loadMusicStream("song.wav");
@@ -139,15 +139,7 @@ fn downloadMusic(url: []u8, gpa: std.mem.Allocator) !rl.Music {
     return sound;
 }
 
-const TransformInfo = struct {
-    position: rl.Vector3,
-    rotation: rl.Quaternion,
-    rotation_matrix: rl.Matrix,
-    rotation_axis: rl.Vector3,
-    rotation_angle: f64,
-    transform: rl.Matrix,
-    direction: rl.Vector3
-};
+const TransformInfo = struct { position: rl.Vector3, rotation: rl.Quaternion, rotation_matrix: rl.Matrix, rotation_axis: rl.Vector3, rotation_angle: f64, transform: rl.Matrix, direction: rl.Vector3 };
 
 fn computeAllForms(position: rl.Vector3, rotation: rl.Quaternion) TransformInfo {
     const rotation_matrix = rl.Quaternion.toMatrix(rotation);
@@ -160,7 +152,7 @@ fn computeAllForms(position: rl.Vector3, rotation: rl.Quaternion) TransformInfo 
 
     const direction = FORWARD.transform(rotation_matrix);
 
-    return .{.position = position, .rotation = rotation, .rotation_matrix = rotation_matrix, .rotation_axis = rotation_axis, .rotation_angle = rotation_angle, .transform = transform, .direction = direction};
+    return .{ .position = position, .rotation = rotation, .rotation_matrix = rotation_matrix, .rotation_axis = rotation_axis, .rotation_angle = rotation_angle, .transform = transform, .direction = direction };
 }
 
 fn interpolateFrames(a: *const rp.ReplayFrame, b: *const rp.ReplayFrame, time: f64) rp.ReplayFrame {
@@ -197,8 +189,7 @@ fn drawLineGraph(x: i32, y: i32, width: i32, height: i32, min_y: f32, max_y: f32
     defer gpa.free(points);
 
     for (0..values.len, values) |xp, yp| {
-        points[xp] = .init(rl.math.remap(@floatFromInt(xp), 0, @floatFromInt(values.len - 1), @floatFromInt(x), @floatFromInt(x + width)),
-                           rl.math.remap(yp, min_y, max_y, @floatFromInt(y), @floatFromInt(y + height)));
+        points[xp] = .init(rl.math.remap(@floatFromInt(xp), 0, @floatFromInt(values.len - 1), @floatFromInt(x), @floatFromInt(x + width)), rl.math.remap(yp, min_y, max_y, @floatFromInt(y), @floatFromInt(y + height)));
     }
 
     // Draw graph
@@ -222,6 +213,21 @@ fn drawHead(position: rl.Vector3, rotation: rl.Quaternion, mesh: rl.Mesh, materi
     const transform = rl.Matrix.scale(1.0, -1.0, 1.0).multiply(rotation_matrix).multiply(rl.Matrix.translate(position.x, position.y, position.z));
 
     rl.drawMesh(mesh, material, transform.multiply(matrix));
+}
+
+fn inputNumber() !u32 {
+    var stdin_buffer: [1024]u8 = undefined;
+    var stdin = std.fs.File.stdin().reader(&stdin_buffer);
+
+    var line_buffer: [1024]u8 = undefined;
+    var w: std.io.Writer = .fixed(&line_buffer);
+
+    // Read an input until "\n" or end of file, and write it to the buffer
+    const line_length = try stdin.interface.streamDelimiterLimit(&w, '\n', .unlimited);
+
+    const input_line = line_buffer[0..line_length];
+
+    return try std.fmt.parseInt(u32, input_line, 10);
 }
 
 pub fn main() !void {
@@ -254,11 +260,12 @@ pub fn main() !void {
     defer gpa_result = gpa.deinit();
 
     // Get replay
-    const replay_web_info = try fetchReplayInfoFromID(9742425, allocator);
+    _ = try std.fs.File.stdout().write("Enter replay ID: ");
+    const replay_web_info = try fetchReplayInfoFromID(try inputNumber(), allocator);
     const replay_url = replay_web_info.replay_url;
     const map_url = replay_web_info.map_url;
 
-    std.debug.print("Replay URL: {s}\nMap URL: {s}\n", .{replay_url, map_url});
+    std.debug.print("Replay URL: {s}\nMap URL: {s}\n", .{ replay_url, map_url });
     defer allocator.free(replay_url);
     defer allocator.free(map_url);
 
@@ -266,8 +273,8 @@ pub fn main() !void {
     //var replay = try rp.parseReplayFile("replay.bsor", allocator);
     defer replay.deinit(allocator);
 
-    //const music = try downloadMusic(map_url, allocator);
-    const music = try rl.loadMusicStream("song.wav");
+    const music = try downloadMusic(map_url, allocator);
+    //const music = try rl.loadMusicStream("song.wav");
 
     std.debug.print("Parsed replay info:\n", .{});
     replay.dump_info();
@@ -374,10 +381,10 @@ pub fn main() !void {
             drawHead(interpolated_frame.head_position, interpolated_frame.head_rotation, head_mesh, head_material, FLIP);
 
             // Left hand
-            drawSaber(interpolated_frame.left_hand_position,interpolated_frame.left_hand_rotation, saber_hilt_mesh, left_saber_hilt_material, saber_blade_mesh, left_saber_blade_material, FLIP);
+            drawSaber(interpolated_frame.left_hand_position, interpolated_frame.left_hand_rotation, saber_hilt_mesh, left_saber_hilt_material, saber_blade_mesh, left_saber_blade_material, FLIP);
 
             // Right hand
-            drawSaber(interpolated_frame.right_hand_position,interpolated_frame.right_hand_rotation, saber_hilt_mesh, right_saber_hilt_material, saber_blade_mesh, right_saber_blade_material, FLIP);
+            drawSaber(interpolated_frame.right_hand_position, interpolated_frame.right_hand_rotation, saber_hilt_mesh, right_saber_hilt_material, saber_blade_mesh, right_saber_blade_material, FLIP);
 
             // Draw cut points for note events
             const lookahead: f64 = 2.0;
@@ -391,7 +398,10 @@ pub fn main() !void {
                     break;
                 }
 
-                const note_color: rl.Color = switch (color) {.red => .red, else => .blue};
+                const note_color: rl.Color = switch (color) {
+                    .red => .red,
+                    else => .blue,
+                };
                 const line_index_f: f32 = @floatFromInt(2 - line_index);
                 const line_layer_f: f32 = @floatFromInt(line_layer);
 
