@@ -205,6 +205,25 @@ fn drawLineGraph(x: i32, y: i32, width: i32, height: i32, min_y: f32, max_y: f32
     rl.drawLineStrip(points, line_color);
 }
 
+fn drawSaber(position: rl.Vector3, rotation: rl.Quaternion, hilt_mesh: rl.Mesh, hilt_material: rl.Material, blade_mesh: rl.Mesh, blade_material: rl.Material, matrix: rl.Matrix) void {
+    const rotation_matrix = rl.Quaternion.toMatrix(rotation);
+    const transform = rl.Matrix.multiply(rotation_matrix, rl.Matrix.translate(position.x, position.y, position.z));
+
+    rl.drawMesh(hilt_mesh, hilt_material, transform.multiply(matrix));
+
+    const rotation_matrix_blade = rl.Matrix.rotateX(std.math.pi / 2.0).multiply(rl.Quaternion.toMatrix(rotation));
+    const transform_blade = rl.Matrix.multiply(rotation_matrix_blade, rl.Matrix.translate(position.x, position.y, position.z));
+
+    rl.drawMesh(blade_mesh, blade_material, transform_blade.multiply(matrix));
+}
+
+fn drawHead(position: rl.Vector3, rotation: rl.Quaternion, mesh: rl.Mesh, material: rl.Material, matrix: rl.Matrix) void {
+    const rotation_matrix = rl.Quaternion.toMatrix(rotation);
+    const transform = rl.Matrix.scale(1.0, -1.0, 1.0).multiply(rotation_matrix).multiply(rl.Matrix.translate(position.x, position.y, position.z));
+
+    rl.drawMesh(mesh, material, transform.multiply(matrix));
+}
+
 pub fn main() !void {
     const FLIP = rl.Matrix.scale(-1.0, 1.0, 1.0);
 
@@ -235,7 +254,7 @@ pub fn main() !void {
     defer gpa_result = gpa.deinit();
 
     // Get replay
-    const replay_web_info = try fetchReplayInfoFromID(25892187, allocator);
+    const replay_web_info = try fetchReplayInfoFromID(9742425, allocator);
     const replay_url = replay_web_info.replay_url;
     const map_url = replay_web_info.map_url;
 
@@ -259,21 +278,36 @@ pub fn main() !void {
     // Meshes
     const head_mesh = rl.genMeshCube(0.41, 0.23, 0.325);
     const saber_hilt_mesh = rl.genMeshCube(0.05, 0.05, 0.3);
+    const saber_blade_mesh = rl.genMeshCylinder(0.015, 1.5, 16);
 
     // Textures
     const head_texture = try rl.loadTexture("head.png");
-    const left_saber_texture = try rl.loadTexture("left_saber.png");
-    const right_saber_texture = try rl.loadTexture("right_saber.png");
+
+    const left_saber_hilt_texture = try rl.loadTexture("left_saber_hilt.png");
+    const right_saber_hilt_texture = try rl.loadTexture("right_saber_hilt.png");
+
+    const left_saber_blade_texture = try rl.loadTexture("left_saber.png");
+    const right_saber_blade_texture = try rl.loadTexture("right_saber.png");
 
     // Materials
     var head_material = try rl.loadMaterialDefault();
-    var left_saber_material = try rl.loadMaterialDefault();
-    var right_saber_material = try rl.loadMaterialDefault();
 
-    // TODO: emission, roughness
+    var left_saber_hilt_material = try rl.loadMaterialDefault();
+    var right_saber_hilt_material = try rl.loadMaterialDefault();
+
+    var left_saber_blade_material = try rl.loadMaterialDefault();
+    var right_saber_blade_material = try rl.loadMaterialDefault();
+
     rl.setMaterialTexture(&head_material, .albedo, head_texture);
-    rl.setMaterialTexture(&left_saber_material, .albedo, left_saber_texture);
-    rl.setMaterialTexture(&right_saber_material, .albedo, right_saber_texture);
+
+    rl.setMaterialTexture(&left_saber_hilt_material, .albedo, left_saber_hilt_texture);
+    rl.setMaterialTexture(&right_saber_hilt_material, .albedo, right_saber_hilt_texture);
+
+    rl.setMaterialTexture(&left_saber_blade_material, .albedo, left_saber_blade_texture);
+    rl.setMaterialTexture(&right_saber_blade_material, .albedo, right_saber_blade_texture);
+
+    rl.setMaterialTexture(&left_saber_blade_material, .emission, left_saber_blade_texture);
+    rl.setMaterialTexture(&right_saber_blade_material, .emission, right_saber_blade_texture);
 
     rl.playMusicStream(music);
 
@@ -337,18 +371,13 @@ pub fn main() !void {
             const interpolated_frame = interpolateFrames(&replay.frames.get(frame_index), &replay.frames.get(frame_index + 1), replay_time);
 
             // Head
-            var transform_info = computeAllForms(interpolated_frame.head_position, interpolated_frame.head_rotation);
-            rl.drawMesh(head_mesh, head_material, transform_info.transform);
+            drawHead(interpolated_frame.head_position, interpolated_frame.head_rotation, head_mesh, head_material, FLIP);
 
             // Left hand
-            transform_info = computeAllForms(interpolated_frame.left_hand_position, interpolated_frame.left_hand_rotation);
-            rl.drawMesh(saber_hilt_mesh, left_saber_material, transform_info.transform.multiply(FLIP));
-            rl.drawLine3D(transform_info.position.transform(FLIP), transform_info.position.transform(FLIP).add(transform_info.direction.transform(FLIP).scale(1.5)), .red);
+            drawSaber(interpolated_frame.left_hand_position,interpolated_frame.left_hand_rotation, saber_hilt_mesh, left_saber_hilt_material, saber_blade_mesh, left_saber_blade_material, FLIP);
 
             // Right hand
-            transform_info = computeAllForms(interpolated_frame.right_hand_position, interpolated_frame.right_hand_rotation);
-            rl.drawMesh(saber_hilt_mesh, right_saber_material, transform_info.transform.multiply(FLIP));
-            rl.drawLine3D(transform_info.position.transform(FLIP), transform_info.position.transform(FLIP).add(transform_info.direction.transform(FLIP).scale(1.5)), .blue);
+            drawSaber(interpolated_frame.right_hand_position,interpolated_frame.right_hand_rotation, saber_hilt_mesh, right_saber_hilt_material, saber_blade_mesh, right_saber_blade_material, FLIP);
 
             // Draw cut points for note events
             const lookahead: f64 = 2.0;
