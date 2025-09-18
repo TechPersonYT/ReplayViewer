@@ -1,8 +1,10 @@
 const std = @import("std");
 const rl = @import("raylib");
 const rp = @import("replay.zig");
+const tweens = @import("tweens.zig");
 
 const FORWARD: rl.Vector3 = .{ .x = 0.0, .y = 0.0, .z = 1.0 };
+const UP: rl.Vector3 = .{ .x = 0.0, .y = 1.0, .z = 0.0 };
 const ONE: rl.Vector3 = .{ .x = 1.0, .y = 1.0, .z = 1.0 };
 
 const GRAPH_SAMPLE_SIZE: usize = 100;
@@ -28,10 +30,6 @@ const WebReplayInfo = struct {
     replay_url: []u8,
     map_url: []u8,
 };
-
-fn easeOutQuart(x: f32) f32 {
-    return 1.0 - std.math.pow(f32, 1.0 - x, 4.0);
-}
 
 fn fetchReplayInfoFromID(id: u32, gpa: std.mem.Allocator) !WebReplayInfo {
     std.debug.print("Fetching replay info from API\n", .{});
