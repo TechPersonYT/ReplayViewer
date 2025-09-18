@@ -12,6 +12,8 @@ const ReplayFileSection = enum(u8) {
     pauses,
     controller_offsets,
     user_data,
+
+    _,
 };
 
 pub const ReplayFrame = struct {
@@ -28,7 +30,7 @@ pub const ReplayFrame = struct {
     right_hand_rotation: rl.Quaternion,
 };
 
-pub const ScoringType = enum {
+pub const ScoringType = enum(i32) {
     normal,
     ignore,
     no_score,
@@ -38,33 +40,30 @@ pub const ScoringType = enum {
     burst_slider_head,
     burst_slider_element,
 
-    other,
-    scoring,
-    types,
-    i,
-    guess,
+    _,
 };
 
-pub const EventType = enum {
+pub const EventType = enum(i32) {
     good,
     bad,
     miss,
     bomb,
+
+    _,
 };
 
 pub const SaberType = enum(i32) {
     left = 0,
     right = 1,
+
+    _,
 };
 
 pub const NoteColor = enum(i32) {
     red = 0,
     blue = 1,
 
-    others,
-    maybe,
-    possibly,
-    i_guess,
+    _,
 };
 
 pub const CutInfo = struct {
