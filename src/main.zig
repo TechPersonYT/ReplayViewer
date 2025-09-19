@@ -8,10 +8,20 @@ const UP: rl.Vector3 = .{ .x = 0.0, .y = 1.0, .z = 0.0 };
 const ONE: rl.Vector3 = .{ .x = 1.0, .y = 1.0, .z = 1.0 };
 
 const GRAPH_SAMPLE_SIZE: usize = 100;
+const GRAPH_WIDTH: i32 = 400;
+const GRAPH_HEIGHT: i32 = 200;
+const GRAPH_X: i32 = 0;
+const GRAPH_Y: i32 = 0;
+
 const CUBE_SIDE_LENGTH: f32 = 0.4;
 const CUBE_SIZE: rl.Vector3 = .{ .x = CUBE_SIDE_LENGTH, .y = CUBE_SIDE_LENGTH, .z = CUBE_SIDE_LENGTH };
 
 const CUT_VISUAL_LENGTH: f32 = 0.5;
+
+const TRAIL_DURATION: f32 = 0.25;
+const TRAIL_ITERATIONS = 120;
+
+const SABER_LENGTH: f32 = 1.5;
 
 var REPLAY_TO_RAYLIB: ?rl.Matrix = null;
 
@@ -176,7 +186,7 @@ fn interpolateFrames(a: *const rp.ReplayFrame, b: *const rp.ReplayFrame, time: f
     };
 }
 
-fn lerpFrameIndexToNext(frame_index: usize, time: f32, frame_times: []f32) f64 {
+fn lerpFrameIndexToNext(frame_index: usize, time: f32, frame_times: []f32) f32 {
     const next_frame_index = frame_index + 1;
 
     return @max(0.0, rl.math.remap(@floatCast(time), frame_times[frame_index], frame_times[next_frame_index], @floatFromInt(frame_index), @floatFromInt(next_frame_index)));
@@ -198,7 +208,7 @@ fn lerpSlice(slice: anytype, index: f32) std.meta.Elem(@TypeOf(slice)) {
     }
 }
 
-fn drawLineGraph(x: i32, y: i32, width: i32, height: i32, min_y: f32, max_y: f32, values: []f32, line_color: rl.Color, border_width: f32, border_color: rl.Color, zero_line: bool, gpa: std.mem.Allocator) !void {
+fn drawLineGraph(x: i32, y: i32, width: i32, height: i32, min_y: f32, max_y: f32, mid_y: f32, values: []f32, line_color: rl.Color, border_width: f32, border_color: rl.Color, zero_line: bool, gpa: std.mem.Allocator) !void {
     // Draw border
     //rl.drawRectangleLinesEx(.init(@floatFromInt(x), @floatFromInt(y), @floatFromInt(width), @floatFromInt(height)), border_width, border_color);
     _ = border_width;
@@ -206,7 +216,7 @@ fn drawLineGraph(x: i32, y: i32, width: i32, height: i32, min_y: f32, max_y: f32
 
     // Draw zero line
     if (zero_line) {
-        const zero: i32 = @intFromFloat(rl.math.remap(0, min_y, max_y, 0, @floatFromInt(height)));
+        const zero: i32 = @intFromFloat(rl.math.remap(mid_y, min_y, max_y, 0, @floatFromInt(height)));
         rl.drawLine(0, zero, width, zero, .gray);
     }
 
@@ -219,6 +229,31 @@ fn drawLineGraph(x: i32, y: i32, width: i32, height: i32, min_y: f32, max_y: f32
 
     // Draw graph
     rl.drawLineStrip(points, line_color);
+}
+
+fn drawScoreDotGraph(x: i32, y: i32, width: i32, height: i32, scores: []f32, min_y: f32, max_y: f32, values: []f32, radius: f32, border_width: f32, border_color: rl.Color, zero_line: bool) void {
+    // Draw border
+    //rl.drawRectangleLinesEx(.init(@floatFromInt(x), @floatFromInt(y), @floatFromInt(width), @floatFromInt(height)), border_width, border_color);
+    _ = border_width;
+    _ = border_color;
+
+    const zero: i32 = @intFromFloat(rl.math.remap(0, 0, 115, 0, @floatFromInt(height)));
+
+    // Draw zero line
+    if (zero_line) {
+        rl.drawLine(0, zero, width, zero, .gray);
+    }
+
+    for (0..values.len, scores, values) |xp, yp, yp2| {
+        if (yp < 0.0) {
+            continue;
+        }
+
+        const h = rl.math.remap(yp2, min_y, max_y, @floatFromInt(y), @floatFromInt(y + height));
+        const v = rl.Vector2.init(rl.math.remap(@floatFromInt(xp), 0, @floatFromInt(scores.len - 1), @floatFromInt(x), @floatFromInt(x + width)), h);
+        rl.drawCircleV(v, radius + 1, .white);
+        rl.drawCircleV(v, radius, getHSVColor(@intFromFloat(@abs(yp))));
+    }
 }
 
 fn drawSaber(position: rl.Vector3, rotation: rl.Quaternion, hilt_mesh: rl.Mesh, hilt_material: rl.Material, blade_mesh: rl.Mesh, blade_material: rl.Material) void {
@@ -301,6 +336,50 @@ fn quaternionConjugate(q: rl.Quaternion) rl.Quaternion {
     return .{ .x = -q.x, .y = -q.y, .z = -q.z, .w = q.w };
 }
 
+fn frameFromReplayTime(replay_time: f32, frame_times: []f32) usize {
+    var frame_index: usize = 0;
+
+    while (@as(f64, @floatCast(frame_times[frame_index])) < replay_time) {
+        if (frame_index >= frame_times.len - 1) {
+            break;
+        }
+
+        frame_index += 1;
+    }
+
+    if (frame_index > 0) {
+        frame_index -= 1;
+    }
+
+    return frame_index;
+}
+
+fn computeCutScore(info: rp.CutInfo) i32 {
+    return @intFromFloat(std.math.clamp(70.0 * info.before_cut_rating, 0.0, 70.0) + std.math.clamp(30.0 * info.after_cut_rating, 0.0, 30.0) + std.math.clamp((1.0 - std.math.clamp(info.cut_distance_to_center / 0.3, 0.0, 1.0)) * 15.0, 0.0, 15.0));
+}
+
+fn drawSaberTrail(positions: []rl.Vector3, rotations: []rl.Quaternion, time: f32, times: []f32, trail_color: rl.Color) void {
+    const iterations = TRAIL_ITERATIONS;
+    const lookbehind = TRAIL_DURATION / @as(f32, @floatFromInt(iterations));
+
+    var last_frame = lerpFrameIndexToNext(frameFromReplayTime(time, times), time, times);
+    var last_position = lerpSlice(positions, last_frame);
+    var last_rotation = lerpSlice(rotations, last_frame);
+
+    for (1..iterations) |i| {
+        const new_time = time - @as(f32, @floatFromInt(i)) * lookbehind;
+        const frame = lerpFrameIndexToNext(frameFromReplayTime(new_time, times), new_time, times);
+        const position = lerpSlice(positions, frame);
+        const rotation = lerpSlice(rotations, frame);
+
+        rl.drawLine3D(toRaylib(last_position.add(FORWARD.scale(SABER_LENGTH).rotateByQuaternion(last_rotation))), toRaylib(position.add(FORWARD.scale(SABER_LENGTH).rotateByQuaternion(rotation))), withAlpha(trail_color, @intFromFloat(@as(f32, @floatFromInt(iterations - i + 1)) / @as(f32, @floatFromInt(iterations)) * 255)));
+
+        last_frame = frame;
+        last_position = position;
+        last_rotation = rotation;
+    }
+}
+
 pub fn main() !void {
     REPLAY_TO_RAYLIB = rl.Matrix.scale(-1.0, 1.0, 1.0);
 
@@ -356,7 +435,7 @@ pub fn main() !void {
     // Meshes
     const head_mesh = rl.genMeshCube(0.41, 0.23, 0.325);
     const saber_hilt_mesh = rl.genMeshCube(0.05, 0.05, 0.3);
-    const saber_blade_mesh = rl.genMeshCylinder(0.015, 1.5, 16);
+    const saber_blade_mesh = rl.genMeshCylinder(0.015, SABER_LENGTH, 16);
 
     // Textures
     const head_texture = try rl.loadTexture("head.png");
@@ -434,24 +513,14 @@ pub fn main() !void {
             replay_time = music_time + rl.getTime() - last_music_sync;
 
             // Sync frame with replay time
-            while (@as(f64, @floatCast(replay.frames.items(.time)[frame_index])) < replay_time) {
-                if (frame_index >= replay.frames.len - 1) {
-                    break;
-                }
+            frame_index = frameFromReplayTime(@floatCast(replay_time), replay.frames.items(.time));
 
-                frame_index += 1;
-            }
-
-            if (frame_index > 0) {
-                frame_index -= 1;
-            }
-
-            if (frame_index >= replay.frames.len) {
+            if (frame_index + 2 >= replay.frames.len) {
                 break;
             }
 
             //const interpolated_frame = interpolateFrames(&replay.frames.get(frame_index), &replay.frames.get(frame_index + 1), replay_time);
-            const interpolated_frame_index: f32 = @floatCast(lerpFrameIndexToNext(frame_index, @floatCast(replay_time), replay.frames.items(.time)));
+            const interpolated_frame_index: f32 = lerpFrameIndexToNext(frame_index, @floatCast(replay_time), replay.frames.items(.time));
 
             const interpolated_head_position = lerpSlice(replay.frames.items(.head_position), interpolated_frame_index);
             const interpolated_head_rotation = lerpSlice(replay.frames.items(.head_rotation), interpolated_frame_index);
@@ -465,9 +534,11 @@ pub fn main() !void {
 
             // Left hand
             drawSaber(interpolated_left_hand_position, interpolated_left_hand_rotation, saber_hilt_mesh, left_saber_hilt_material, saber_blade_mesh, left_saber_blade_material);
+            drawSaberTrail(replay.frames.items(.left_hand_position), replay.frames.items(.left_hand_rotation), @floatCast(replay_time), replay.frames.items(.time), .red);
 
             // Right hand
             drawSaber(interpolated_right_hand_position, interpolated_right_hand_rotation, saber_hilt_mesh, right_saber_hilt_material, saber_blade_mesh, right_saber_blade_material);
+            drawSaberTrail(replay.frames.items(.right_hand_position), replay.frames.items(.right_hand_rotation), @floatCast(replay_time), replay.frames.items(.time), .blue);
 
             // Note events
             const lookahead: f64 = 2.0;
@@ -499,7 +570,7 @@ pub fn main() !void {
                         const animation_progress = rl.math.remap(@floatCast(replay_time), event_time, @floatCast(event_time + lookbehind), 0.0, 1.0);
 
                         const fade_color: rl.Color = .init(175, 175, 175, @as(u8, @intFromFloat(std.math.clamp(255.0 - animation_progress * 255.0, 0.0, 255.0))));
-                        const score: i32 = @intFromFloat(std.math.clamp(70.0 * info.before_cut_rating, 0.0, 70.0) + std.math.clamp(30.0 * info.after_cut_rating, 0.0, 30.0) + std.math.clamp((1.0 - std.math.clamp(info.cut_distance_to_center / 0.3, 0.0, 1.0)) * 15.0, 0.0, 15.0));
+                        const score = computeCutScore(info);
                         const score_color = withAlpha(getHSVColor(score), fade_color.a);
 
                         rl.drawSphere(frozen_note_position, info.cut_distance_to_center, fade_color);
@@ -528,37 +599,70 @@ pub fn main() !void {
             rl.drawGrid(10, 0.5);
         }
 
-        const y_min = -std.math.pi;
-        const y_max = std.math.pi;
+        const y_min: f32 = 0.0;
+        const y_max: f32 = std.math.pi;
+        const y_mid: f32 = std.math.pi / 2.0;
 
         var axis: rl.Vector3 = undefined;
         var angle: f32 = undefined;
 
         const forward_quaternion: rl.Quaternion = rl.Quaternion.fromVector3ToVector3(.init(0, 0, 0), .init(0, 0, 1));
 
+        const sample_start: usize = @intCast(@max(1, @as(i64, @intCast(frame_index)) - GRAPH_SAMPLE_SIZE));
+
         // Left hand motion
         var left_hand_angles: [GRAPH_SAMPLE_SIZE]f32 = .{0.0} ** GRAPH_SAMPLE_SIZE;
         var last_rotation = replay.frames.items(.left_hand_rotation)[0];
 
-        for (0.., replay.frames.items(.left_hand_rotation)[@intCast(@max(1, @as(i64, @intCast(frame_index)) - GRAPH_SAMPLE_SIZE))..frame_index]) |i, rotation| {
+        for (0.., replay.frames.items(.left_hand_rotation)[sample_start..frame_index]) |i, rotation| {
             forward_quaternion.subtract(rotation).toAxisAngle(&axis, &angle);
             left_hand_angles[i] = angle;
             last_rotation = rotation;
         }
 
-        try drawLineGraph(0, 0, 400, 200, y_min, y_max, &left_hand_angles, .red, 2, .white, false, allocator);
+        try drawLineGraph(GRAPH_X, GRAPH_Y, GRAPH_WIDTH, GRAPH_HEIGHT, y_min, y_max, y_mid, &left_hand_angles, .red, 2, .white, true, allocator);
 
         // Right hand motion
         var right_hand_angles: [GRAPH_SAMPLE_SIZE]f32 = .{0.0} ** GRAPH_SAMPLE_SIZE;
         last_rotation = replay.frames.items(.right_hand_rotation)[0];
 
-        for (0.., replay.frames.items(.right_hand_rotation)[@intCast(@max(1, @as(i64, @intCast(frame_index)) - GRAPH_SAMPLE_SIZE))..frame_index]) |i, rotation| {
+        for (0.., replay.frames.items(.right_hand_rotation)[sample_start..frame_index]) |i, rotation| {
             forward_quaternion.subtract(rotation).toAxisAngle(&axis, &angle);
             right_hand_angles[i] = angle;
             last_rotation = rotation;
         }
 
-        try drawLineGraph(0, 0, 400, 200, y_min, y_max, &right_hand_angles, .blue, 2, .white, false, allocator);
+        try drawLineGraph(GRAPH_X, GRAPH_Y, GRAPH_WIDTH, GRAPH_HEIGHT, y_min, y_max, y_mid, &right_hand_angles, .blue, 2, .white, false, allocator);
+
+        // Cut scores
+        var cut_scores_left: [GRAPH_SAMPLE_SIZE]f32 = .{-1.0} ** GRAPH_SAMPLE_SIZE;
+        var cut_scores_right: [GRAPH_SAMPLE_SIZE]f32 = .{-1.0} ** GRAPH_SAMPLE_SIZE;
+
+        for (replay.notes.items(.event_time), replay.notes.items(.cut_info), replay.notes.items(.color)) |time, cut_info, color| {
+            const i = frameFromReplayTime(time, replay.frames.items(.time)[sample_start..frame_index]);
+
+            if (i == 0) {
+                continue;
+            }
+
+            if (i >= GRAPH_SAMPLE_SIZE - 2) {
+                break;
+            }
+
+            if (cut_info) |cut| {
+                // FIXME: SLOW!!!
+
+                switch (color) {
+                    .red => cut_scores_left[i] = @floatFromInt(computeCutScore(cut)),
+                    .blue => cut_scores_right[i] = @floatFromInt(computeCutScore(cut)),
+
+                    else => {},
+                }
+            }
+        }
+
+        drawScoreDotGraph(GRAPH_X, GRAPH_Y, GRAPH_WIDTH, GRAPH_HEIGHT, &cut_scores_left, y_min, y_max, &left_hand_angles, 4, 2, .white, false);
+        drawScoreDotGraph(GRAPH_X, GRAPH_Y, GRAPH_WIDTH, GRAPH_HEIGHT, &cut_scores_right, y_min, y_max, &right_hand_angles, 4, 2, .white, false);
 
         var buffer: [4096]u8 = undefined;
         const text = try std.fmt.bufPrintZ(&buffer, "Player name: {s}\nHeadset: {s}\nMap: {s} ({s})\nMapped by: {s}\nJ/D: {}\nHeight: {}\nFrame: {}\nTotal frames: {}", .{ replay.player_name, replay.hmd, replay.song_name, replay.difficulty_name, replay.mapper_name, replay.jump_distance, replay.height, frame_index, replay.frames.len });
