@@ -6,7 +6,7 @@ const tweens = @import("tweens.zig");
 const FORWARD: rl.Vector3 = .{ .x = 0.0, .y = 0.0, .z = 1.0 };
 const UP: rl.Vector3 = .{ .x = 0.0, .y = 1.0, .z = 0.0 };
 
-const GRAPH_SAMPLE_SIZE: usize = 100;
+const GRAPH_SAMPLE_LENGTH: f32 = 2.0;
 const GRAPH_WIDTH: i32 = 400;
 const GRAPH_HEIGHT: i32 = 200;
 const GRAPH_X: i32 = 0;
@@ -23,6 +23,43 @@ const TRAIL_ITERATIONS = 120;
 const SABER_LENGTH: f32 = 1.5;
 
 var REPLAY_TO_RAYLIB: ?rl.Matrix = null;
+
+const SwingTwistDecomposition = struct {
+    swing: f32,
+    twist: f32,
+
+    // Adapted from https://github.com/TheAllenChou/unity-cj-lib/blob/master/Unity%20CJ%20Lib/Assets/CjLib/Script/Math/QuaternionUtil.cs
+    fn fromQuaternion(q: rl.Quaternion) SwingTwistDecomposition {
+        // Probably good enough
+        const twist_axis = FORWARD;
+        const r = rl.Vector3.init(q.x, q.y, q.z);
+
+        var swing: f32 = 0.0;
+        var twist: f32 = 0.0;
+
+        // Rotation by 180 degrees
+        if (r.lengthSqr() < std.math.floatEps(f32)) {
+            const rotated_twist_axis = twist_axis.rotateByQuaternion(q);
+            const swing_axis = twist_axis.crossProduct(rotated_twist_axis);
+
+            if (swing_axis.lengthSqr() > std.math.floatEps(f32)) {
+                swing = rl.Vector3.angle(twist_axis, rotated_twist_axis);
+            }
+
+            // Always twist 180 degrees on singularity
+            twist = std.math.pi;
+            return .{ .swing = swing, .twist = twist };
+        }
+
+        const p = rl.Vector3.project(r, twist_axis);
+        const twist_r = rl.Quaternion.init(p.x, p.y, p.z, q.w);
+
+        twist = twist_r.length();
+        swing = q.multiply(twist_r.invert()).length();
+
+        return .{ .swing = swing, .twist = twist };
+    }
+};
 
 fn getHSVColor(score: i64) rl.Color {
     if (score >= 115) {
@@ -395,15 +432,19 @@ fn calculateSaberTipPosition(hilt_position: rl.Vector3, hilt_rotation: rl.Quater
     return hilt_position.add(FORWARD.scale(SABER_LENGTH).rotateByQuaternion(hilt_rotation));
 }
 
+fn orderF32(a: f32, b: f32) std.math.Order {
+    return std.math.order(a, b);
+}
+
 // TODO: Assert somewhere that the slice is actually sorted by time with std.sort.isSorted()
-fn replayTimeRangeToSlice(start_time: f32, end_time: f32, slice: []f32) ?[]f32 {
-    const lower = std.sort.lowerBound(f32, slice, start_time, std.math.order);
+fn replayTimeRangeToSlice(start_time: f32, end_time: f32, slice: anytype, times: []f32) []std.meta.Elem(@TypeOf(slice)) {
+    const lower = std.sort.lowerBound(f32, times, start_time, orderF32);
 
     if (lower == slice.len) {
-        return null;
+        return &.{};
     }
 
-    const upper = std.sort.upperBound(f32, slice, end_time, std.math.order);
+    const upper = std.sort.upperBound(f32, times, end_time, orderF32);
 
     if (upper == slice.len) {
         return slice[lower..];
@@ -427,6 +468,12 @@ fn drawNote(note_mesh: *const rl.Mesh, red_note_material: *const rl.Material, re
 
             else => {},
         }
+    }
+}
+
+fn computeSwingTwistDecomps(swing_twists: *std.MultiArrayList(SwingTwistDecomposition), rotations: []rl.Quaternion, allocator: std.mem.Allocator) !void {
+    for (rotations) |rotation| {
+        try swing_twists.append(allocator, SwingTwistDecomposition.fromQuaternion(rotation));
     }
 }
 
@@ -503,8 +550,8 @@ pub fn main() !void {
     const red_note_dot_texture = try rl.loadTexture("red_note_dot.png");
     const blue_note_dot_texture = try rl.loadTexture("blue_note_dot.png");
 
-    rl.setTextureWrap(red_note_texture, .mirror_clamp);
-    rl.setTextureWrap(blue_note_texture, .mirror_clamp);
+    rl.setTextureWrap(red_note_texture, .clamp);
+    rl.setTextureWrap(blue_note_texture, .clamp);
 
     rl.setTextureWrap(red_note_dot_texture, .clamp);
     rl.setTextureWrap(blue_note_dot_texture, .clamp);
@@ -543,9 +590,9 @@ pub fn main() !void {
 
     rl.playMusicStream(music);
 
-    var music_time: f64 = rl.getMusicTimePlayed(music);
-    var replay_time: f64 = music_time;
-    var last_music_sync: f64 = rl.getTime();
+    var music_time: f32 = rl.getMusicTimePlayed(music);
+    var replay_time: f32 = @floatCast(music_time);
+    var last_music_sync: f32 = @floatCast(rl.getTime());
 
     // Main game loop
     while (!rl.windowShouldClose()) { // Detect window close button or ESC key
@@ -582,20 +629,20 @@ pub fn main() !void {
             // Sync with music every second
             if (rl.getTime() - last_music_sync > 1.0) {
                 music_time = rl.getMusicTimePlayed(music);
-                last_music_sync = rl.getTime();
+                last_music_sync = @floatCast(rl.getTime());
             }
 
-            replay_time = music_time + rl.getTime() - last_music_sync;
+            replay_time = music_time + @as(f32, @floatCast(rl.getTime())) - last_music_sync;
 
             // Sync frame with replay time
-            frame_index = frameFromReplayTime(@floatCast(replay_time), replay.frames.items(.time));
+            frame_index = frameFromReplayTime(replay_time, replay.frames.items(.time));
 
             if (frame_index + 2 >= replay.frames.len) {
                 break;
             }
 
             //const interpolated_frame = interpolateFrames(&replay.frames.get(frame_index), &replay.frames.get(frame_index + 1), replay_time);
-            const interpolated_frame_index: f32 = lerpFrameIndexToNext(frame_index, @floatCast(replay_time), replay.frames.items(.time));
+            const interpolated_frame_index: f32 = lerpFrameIndexToNext(frame_index, replay_time, replay.frames.items(.time));
 
             const interpolated_head_position = lerpSlice(replay.frames.items(.head_position), interpolated_frame_index);
             const interpolated_head_rotation = lerpSlice(replay.frames.items(.head_rotation), interpolated_frame_index);
@@ -609,27 +656,30 @@ pub fn main() !void {
 
             // Left hand
             drawSaber(interpolated_left_hand_position, interpolated_left_hand_rotation, &saber_hilt_mesh, &left_saber_hilt_material, &saber_blade_mesh, &left_saber_blade_material);
-            drawSaberTrail(replay.frames.items(.left_hand_position), replay.frames.items(.left_hand_rotation), @floatCast(replay_time), replay.frames.items(.time), .red);
+            drawSaberTrail(replay.frames.items(.left_hand_position), replay.frames.items(.left_hand_rotation), replay_time, replay.frames.items(.time), .red);
 
             // Right hand
             drawSaber(interpolated_right_hand_position, interpolated_right_hand_rotation, &saber_hilt_mesh, &right_saber_hilt_material, &saber_blade_mesh, &right_saber_blade_material);
-            drawSaberTrail(replay.frames.items(.right_hand_position), replay.frames.items(.right_hand_rotation), @floatCast(replay_time), replay.frames.items(.time), .blue);
+            drawSaberTrail(replay.frames.items(.right_hand_position), replay.frames.items(.right_hand_rotation), replay_time, replay.frames.items(.time), .blue);
 
             // Note events
-            const lookahead: f64 = 2.0;
-            const lookbehind: f64 = 1.0;
+            const lookahead = 2.0;
+            const lookbehind = 1.0;
+            const view_start_time: f32 = replay_time - lookbehind;
+            const view_end_time: f32 = replay_time + lookahead;
             const actual_height = if (replay.height <= 0.05) replay.heights.items(.height)[0] else replay.height;
 
-            for (replay.notes.items(.event_time), replay.notes.items(.spawn_time), replay.notes.items(.line_index), replay.notes.items(.line_layer), replay.notes.items(.cut_direction), replay.notes.items(.cut_info), replay.notes.items(.color)) |event_time, spawn_time, line_index, line_layer, note_direction, cut_info, note_color| {
-                if (event_time < replay_time - lookbehind) {
-                    continue;
-                }
+            const all_event_times = replay.notes.items(.event_time);
+            const event_times = replayTimeRangeToSlice(view_start_time, view_end_time, all_event_times, all_event_times);
+            const spawn_times = replayTimeRangeToSlice(view_start_time, view_end_time, replay.notes.items(.spawn_time), all_event_times);
+            const line_indices = replayTimeRangeToSlice(view_start_time, view_end_time, replay.notes.items(.line_index), all_event_times);
+            const line_layers = replayTimeRangeToSlice(view_start_time, view_end_time, replay.notes.items(.line_layer), all_event_times);
+            const cut_directions = replayTimeRangeToSlice(view_start_time, view_end_time, replay.notes.items(.cut_direction), all_event_times);
+            const cut_infos = replayTimeRangeToSlice(view_start_time, view_end_time, replay.notes.items(.cut_info), all_event_times);
+            const note_colors = replayTimeRangeToSlice(view_start_time, view_end_time, replay.notes.items(.color), all_event_times);
 
-                if (event_time > replay_time + lookahead) {
-                    break;
-                }
-
-                const z_time = computeTimedNoteZ(@floatCast(replay_time), spawn_time, replay.jump_distance);
+            for (event_times, spawn_times, line_indices, line_layers, cut_directions, cut_infos, note_colors) |event_time, spawn_time, line_index, line_layer, note_direction, cut_info, note_color| {
+                const z_time = computeTimedNoteZ(replay_time, spawn_time, replay.jump_distance);
 
                 const note_position = computeNotePosition(line_index, line_layer, z_time, actual_height);
                 const note_transform = computeNoteTransform(note_position, note_direction);
@@ -644,22 +694,22 @@ pub fn main() !void {
 
                     // Postcut animation
                     if (replay_time > event_time) {
-                        const animation_progress = rl.math.remap(@floatCast(replay_time), event_time, @floatCast(event_time + lookbehind), 0.0, 1.0);
+                        const animation_progress = rl.math.remap(replay_time, event_time, view_end_time, 0.0, 1.0);
 
                         const fade_color: rl.Color = .init(175, 175, 175, @as(u8, @intFromFloat(std.math.clamp(255.0 - animation_progress * 255.0, 0.0, 255.0))));
                         const score = computeCutScore(info);
                         const score_color = withAlpha(getHSVColor(score), fade_color.a);
 
-                        rl.drawSphere(frozen_note_position, info.cut_distance_to_center, fade_color);
+                        rl.drawLine3D(frozen_note_position, toRaylib(info.cut_point), fade_color);
                         rl.drawCubeWiresV(frozen_note_position, CUBE_SIZE, withAlpha(getNoteColor(note_color), fade_color.a));
 
                         const cut_direction = rl.Vector3.init(info.cut_normal.x, info.cut_normal.y, 0.0).perpendicular().negate().normalize();
-                        rl.drawLine3D(toRaylib(info.cut_point), toRaylib(info.cut_point.add(cut_direction.scale(@floatCast(@min(CUT_VISUAL_LENGTH, (replay_time - event_time) * info.saber_speed))))), fade_color);
+                        rl.drawLine3D(toRaylib(info.cut_point), toRaylib(info.cut_point.add(cut_direction.scale(@min(CUT_VISUAL_LENGTH, (replay_time - event_time) * info.saber_speed)))), fade_color);
 
                         const flyaway_vector = cut_direction.scale(info.saber_speed / 5.0);
                         const point = rl.Vector3.lerp(info.cut_point, info.cut_point.add(flyaway_vector), animation_progress);
-                        const scale = @max(0.0, 1.0 - animation_progress * 0.3);
-                        rl.drawSphere(toRaylib(point), 0.2 * scale, score_color);
+                        const scale = @max(0.0, 1.0 - animation_progress);
+                        rl.drawSphere(toRaylib(point), 0.1 * scale, score_color);
 
                         camera.end();
                         defer camera.begin();
@@ -676,70 +726,58 @@ pub fn main() !void {
             rl.drawGrid(10, 0.5);
         }
 
-        const y_min: f32 = 0.0;
-        const y_max: f32 = std.math.pi;
-        const y_mid: f32 = std.math.pi / 2.0;
+//        const y_min: f32 = 0.0;
+//        const y_max: f32 = std.math.pi;
+//        const y_mid: f32 = std.math.pi / 2.0;
 
-        var axis: rl.Vector3 = undefined;
-        var angle: f32 = undefined;
+        const sample_start_time = replay_time - GRAPH_SAMPLE_LENGTH;
+        const sample_end_time = replay_time;
 
-        const forward_quaternion: rl.Quaternion = rl.Quaternion.fromVector3ToVector3(.init(0, 0, 0), .init(0, 0, 1));
+        //const sampled_times = replayTimeRangeToSlice(sample_start_time, sample_end_time, replay.frames.items(.time), replay.frames.items(.time));
+        const sampled_left_hand_rotations = replayTimeRangeToSlice(sample_start_time, sample_end_time, replay.frames.items(.left_hand_rotation), replay.frames.items(.time));
+        const sampled_right_hand_rotations = replayTimeRangeToSlice(sample_start_time, sample_end_time, replay.frames.items(.right_hand_rotation), replay.frames.items(.time));
 
-        const sample_start: usize = @intCast(@max(1, @as(i64, @intCast(frame_index)) - GRAPH_SAMPLE_SIZE));
+        const sampled_cut_times = replayTimeRangeToSlice(sample_start_time, sample_end_time, replay.notes.items(.event_time), replay.notes.items(.event_time));
+        const sampled_cut_infos = replayTimeRangeToSlice(sample_start_time, sample_end_time, replay.notes.items(.cut_info), replay.notes.items(.event_time));
+        const sampled_note_colors = replayTimeRangeToSlice(sample_start_time, sample_end_time, replay.notes.items(.color), replay.notes.items(.event_time));
 
-        // TODO: Use swing-twist decomposition to show left and right hand motion
+        // Plot left hand motion
+        var left_hand_swing_twists: std.MultiArrayList(SwingTwistDecomposition) = .{};
+        defer left_hand_swing_twists.deinit(allocator);
+        try computeSwingTwistDecomps(&left_hand_swing_twists, sampled_left_hand_rotations, allocator);
+        //try drawLineGraph(GRAPH_X, GRAPH_Y, GRAPH_WIDTH, GRAPH_HEIGHT, y_min, y_max, y_mid, &left_hand_angles, .red, 2, .white, true, allocator);
 
-        // Left hand motion
-        var left_hand_angles: [GRAPH_SAMPLE_SIZE]f32 = .{0.0} ** GRAPH_SAMPLE_SIZE;
-        var last_rotation = replay.frames.items(.left_hand_rotation)[0];
-
-        for (0.., replay.frames.items(.left_hand_rotation)[sample_start..frame_index]) |i, rotation| {
-            forward_quaternion.subtract(rotation).toAxisAngle(&axis, &angle);
-            left_hand_angles[i] = angle;
-            last_rotation = rotation;
-        }
-
-        try drawLineGraph(GRAPH_X, GRAPH_Y, GRAPH_WIDTH, GRAPH_HEIGHT, y_min, y_max, y_mid, &left_hand_angles, .red, 2, .white, true, allocator);
-
-        // Right hand motion
-        var right_hand_angles: [GRAPH_SAMPLE_SIZE]f32 = .{0.0} ** GRAPH_SAMPLE_SIZE;
-        last_rotation = replay.frames.items(.right_hand_rotation)[0];
-
-        for (0.., replay.frames.items(.right_hand_rotation)[sample_start..frame_index]) |i, rotation| {
-            forward_quaternion.subtract(rotation).toAxisAngle(&axis, &angle);
-            right_hand_angles[i] = angle;
-            last_rotation = rotation;
-        }
-
-        try drawLineGraph(GRAPH_X, GRAPH_Y, GRAPH_WIDTH, GRAPH_HEIGHT, y_min, y_max, y_mid, &right_hand_angles, .blue, 2, .white, false, allocator);
+        // Plot right hand motion
+        var right_hand_swing_twists: std.MultiArrayList(SwingTwistDecomposition) = .{};
+        defer right_hand_swing_twists.deinit(allocator);
+        try computeSwingTwistDecomps(&right_hand_swing_twists, sampled_right_hand_rotations, allocator);
+        //try drawLineGraph(GRAPH_X, GRAPH_Y, GRAPH_WIDTH, GRAPH_HEIGHT, y_min, y_max, y_mid, &right_hand_angles, .blue, 2, .white, false, allocator);
 
         // Cut scores
-        var cut_scores_left: [GRAPH_SAMPLE_SIZE]f32 = .{-1.0} ** GRAPH_SAMPLE_SIZE;
-        var cut_scores_right: [GRAPH_SAMPLE_SIZE]f32 = .{-1.0} ** GRAPH_SAMPLE_SIZE;
+        var cut_scores_left: std.ArrayList(f32) = .{};
+        defer cut_scores_left.deinit(allocator);
 
-        for (replay.notes.items(.event_time), replay.notes.items(.cut_info), replay.notes.items(.color)) |time, cut_info, color| {
-            const i = frameFromReplayTime(time, replay.frames.items(.time)[sample_start..frame_index]);
+        var cut_scores_right: std.ArrayList(f32) = .{};
+        defer cut_scores_right.deinit(allocator);
 
-            if (i == 0) {
-                continue;
-            }
+        var score_times: std.ArrayList(f32) = .{};
+        defer score_times.deinit(allocator);
 
-            if (i >= GRAPH_SAMPLE_SIZE - 2) {
-                break;
-            }
-
+        for (sampled_cut_times, sampled_cut_infos, sampled_note_colors) |time, cut_info, color| {
             if (cut_info) |cut| {
                 switch (color) {
-                    .red => cut_scores_left[i] = @floatFromInt(computeCutScore(cut)),
-                    .blue => cut_scores_right[i] = @floatFromInt(computeCutScore(cut)),
+                    .red => try cut_scores_left.append(allocator, @floatFromInt(computeCutScore(cut))),
+                    .blue => try cut_scores_right.append(allocator, @floatFromInt(computeCutScore(cut))),
 
                     else => {},
                 }
+
+                try score_times.append(allocator, time);
             }
         }
 
-        drawScoreDotGraph(GRAPH_X, GRAPH_Y, GRAPH_WIDTH, GRAPH_HEIGHT, &cut_scores_left, y_min, y_max, &left_hand_angles, 4, 2, .white, false);
-        drawScoreDotGraph(GRAPH_X, GRAPH_Y, GRAPH_WIDTH, GRAPH_HEIGHT, &cut_scores_right, y_min, y_max, &right_hand_angles, 4, 2, .white, false);
+        //drawScoreDotGraph(GRAPH_X, GRAPH_Y, GRAPH_WIDTH, GRAPH_HEIGHT, &cut_scores_left, y_min, y_max, &left_hand_angles, 4, 2, .white, false);
+        //drawScoreDotGraph(GRAPH_X, GRAPH_Y, GRAPH_WIDTH, GRAPH_HEIGHT, &cut_scores_right, y_min, y_max, &right_hand_angles, 4, 2, .white, false);
 
         var buffer: [4096]u8 = undefined;
         const text = try std.fmt.bufPrintZ(&buffer, "Player name: {s}\nHeadset: {s}\nMap: {s} ({s})\nMapped by: {s}\nJ/D: {}\nHeight: {}\nFrame: {}\nTotal frames: {}", .{ replay.player_name, replay.hmd, replay.song_name, replay.difficulty_name, replay.mapper_name, replay.jump_distance, replay.height, frame_index, replay.frames.len });
