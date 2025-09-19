@@ -53,15 +53,29 @@ pub const EventType = enum(i32) {
 };
 
 pub const SaberType = enum(i32) {
-    left = 0,
-    right = 1,
+    left,
+    right,
 
     _,
 };
 
 pub const NoteColor = enum(i32) {
-    red = 0,
-    blue = 1,
+    red,
+    blue,
+
+    _,
+};
+
+pub const CutDirection = enum(i32) {
+    up,
+    down,
+    left,
+    right,
+    up_left,
+    up_right,
+    down_left,
+    down_right,
+    dot,
 
     _,
 };
@@ -89,7 +103,7 @@ pub const NoteEvent = struct {
     line_index: i32,
     line_layer: i32,
     color: NoteColor,
-    cut_direction: i32,
+    cut_direction: CutDirection,
     event_time: f32,
     spawn_time: f32,
     event_type: EventType,
@@ -331,7 +345,7 @@ fn takeNoteEvent(reader: *std.Io.Reader) !NoteEvent {
         .line_index = line_index,
         .line_layer = line_layer,
         .color = @enumFromInt(color),
-        .cut_direction = direction,
+        .cut_direction = @enumFromInt(direction),
         .event_time = event_time,
         .spawn_time = spawn_time,
         .event_type = event_type,

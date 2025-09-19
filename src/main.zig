@@ -5,7 +5,6 @@ const tweens = @import("tweens.zig");
 
 const FORWARD: rl.Vector3 = .{ .x = 0.0, .y = 0.0, .z = 1.0 };
 const UP: rl.Vector3 = .{ .x = 0.0, .y = 1.0, .z = 0.0 };
-const ONE: rl.Vector3 = .{ .x = 1.0, .y = 1.0, .z = 1.0 };
 
 const GRAPH_SAMPLE_SIZE: usize = 100;
 const GRAPH_WIDTH: i32 = 400;
@@ -256,23 +255,23 @@ fn drawScoreDotGraph(x: i32, y: i32, width: i32, height: i32, scores: []f32, min
     }
 }
 
-fn drawSaber(position: rl.Vector3, rotation: rl.Quaternion, hilt_mesh: rl.Mesh, hilt_material: rl.Material, blade_mesh: rl.Mesh, blade_material: rl.Material) void {
+fn drawSaber(position: rl.Vector3, rotation: rl.Quaternion, hilt_mesh: *const rl.Mesh, hilt_material: *const rl.Material, blade_mesh: *const rl.Mesh, blade_material: *const rl.Material) void {
     const rotation_matrix = rl.Quaternion.toMatrix(rotation);
     const transform = rl.Matrix.multiply(rotation_matrix, rl.Matrix.translate(position.x, position.y, position.z));
 
-    rl.drawMesh(hilt_mesh, hilt_material, toRaylib(transform));
+    rl.drawMesh(hilt_mesh.*, hilt_material.*, toRaylib(transform));
 
     const rotation_matrix_blade = rl.Matrix.rotateX(std.math.pi / 2.0).multiply(rl.Quaternion.toMatrix(rotation));
     const blade_transform = rl.Matrix.multiply(rotation_matrix_blade, rl.Matrix.translate(position.x, position.y, position.z));
 
-    rl.drawMesh(blade_mesh, blade_material, toRaylib(blade_transform));
+    rl.drawMesh(blade_mesh.*, blade_material.*, toRaylib(blade_transform));
 }
 
-fn drawHead(position: rl.Vector3, rotation: rl.Quaternion, mesh: rl.Mesh, material: rl.Material) void {
+fn drawHead(position: rl.Vector3, rotation: rl.Quaternion, mesh: *const rl.Mesh, material: *const rl.Material) void {
     const rotation_matrix = rl.Quaternion.toMatrix(rotation);
     const transform = rl.Matrix.scale(1.0, -1.0, 1.0).multiply(rotation_matrix).multiply(rl.Matrix.translate(position.x, position.y, position.z));
 
-    rl.drawMesh(mesh, material, toRaylib(transform));
+    rl.drawMesh(mesh.*, material.*, toRaylib(transform));
 }
 
 fn inputNumber() !u32 {
@@ -313,15 +312,27 @@ fn getNoteColor(color: rp.NoteColor) rl.Color {
     };
 }
 
-fn drawNote(position: rl.Vector3, color: rl.Color) void {
-    rl.drawCubeWiresV(position, CUBE_SIZE, color);
-}
-
 fn computeNotePosition(line_index: i32, line_layer: i32, z: f32, height: f32) rl.Vector3 {
-    const line_index_f: f32 = @floatFromInt(2 - line_index);
+    const line_index_f = 1.5 - @as(f32, @floatFromInt(line_index));
     const line_layer_f: f32 = @floatFromInt(line_layer);
 
     return .init(line_index_f / 2.0, line_layer_f / 2.0 + height - 1.0, z);
+}
+
+fn computeNoteTransform(note_position: rl.Vector3, note_direction: rp.CutDirection) rl.Matrix {
+    return rl.Matrix.multiply(switch (note_direction) {
+        .up => rl.Matrix.identity(),
+        .down => rl.Matrix.rotateZ(std.math.pi),
+        .left => rl.Matrix.rotateZ(-std.math.pi * 0.5),
+        .right => rl.Matrix.rotateZ(std.math.pi * 0.5),
+
+        .up_left => rl.Matrix.rotateZ(-std.math.pi * 0.25),
+        .up_right => rl.Matrix.rotateZ(std.math.pi * 0.25),
+        .down_left => rl.Matrix.rotateZ(std.math.pi * 1.5),
+        .down_right => rl.Matrix.rotateZ(std.math.pi * 0.75),
+
+        else => rl.Matrix.identity(),
+    }, rl.Matrix.translate(note_position.x, note_position.y, note_position.z));
 }
 
 fn computeTimedNoteZ(replay_time: f32, spawn_time: f32, jump_distance: f32) f32 {
@@ -372,11 +383,50 @@ fn drawSaberTrail(positions: []rl.Vector3, rotations: []rl.Quaternion, time: f32
         const position = lerpSlice(positions, frame);
         const rotation = lerpSlice(rotations, frame);
 
-        rl.drawLine3D(toRaylib(last_position.add(FORWARD.scale(SABER_LENGTH).rotateByQuaternion(last_rotation))), toRaylib(position.add(FORWARD.scale(SABER_LENGTH).rotateByQuaternion(rotation))), withAlpha(trail_color, @intFromFloat(@as(f32, @floatFromInt(iterations - i + 1)) / @as(f32, @floatFromInt(iterations)) * 255)));
+        rl.drawLine3D(toRaylib(calculateSaberTipPosition(last_position, last_rotation)), toRaylib(calculateSaberTipPosition(position, rotation)), withAlpha(trail_color, @intFromFloat(@as(f32, @floatFromInt(iterations - i + 1)) / @as(f32, @floatFromInt(iterations)) * 255)));
 
         last_frame = frame;
         last_position = position;
         last_rotation = rotation;
+    }
+}
+
+fn calculateSaberTipPosition(hilt_position: rl.Vector3, hilt_rotation: rl.Quaternion) rl.Vector3 {
+    return hilt_position.add(FORWARD.scale(SABER_LENGTH).rotateByQuaternion(hilt_rotation));
+}
+
+// TODO: Assert somewhere that the slice is actually sorted by time with std.sort.isSorted()
+fn replayTimeRangeToSlice(start_time: f32, end_time: f32, slice: []f32) ?[]f32 {
+    const lower = std.sort.lowerBound(f32, slice, start_time, std.math.order);
+
+    if (lower == slice.len) {
+        return null;
+    }
+
+    const upper = std.sort.upperBound(f32, slice, end_time, std.math.order);
+
+    if (upper == slice.len) {
+        return slice[lower..];
+    } else {
+        return slice[lower..upper];
+    }
+}
+
+fn drawNote(note_mesh: *const rl.Mesh, red_note_material: *const rl.Material, red_note_dot_material: *const rl.Material, blue_note_material: *const rl.Material, blue_note_dot_material: *const rl.Material, note_color: rp.NoteColor, note_transform: rl.Matrix, note_direction: rp.CutDirection) void {
+    if (note_direction != .dot) {
+        switch (note_color) {
+            .red => rl.drawMesh(note_mesh.*, red_note_material.*, note_transform),
+            .blue => rl.drawMesh(note_mesh.*, blue_note_material.*, note_transform),
+
+            else => {},
+        }
+    } else {
+        switch (note_color) {
+            .red => rl.drawMesh(note_mesh.*, red_note_dot_material.*, note_transform),
+            .blue => rl.drawMesh(note_mesh.*, blue_note_dot_material.*, note_transform),
+
+            else => {},
+        }
     }
 }
 
@@ -436,6 +486,7 @@ pub fn main() !void {
     const head_mesh = rl.genMeshCube(0.41, 0.23, 0.325);
     const saber_hilt_mesh = rl.genMeshCube(0.05, 0.05, 0.3);
     const saber_blade_mesh = rl.genMeshCylinder(0.015, SABER_LENGTH, 16);
+    const note_mesh = rl.genMeshCube(CUBE_SIDE_LENGTH, CUBE_SIDE_LENGTH, CUBE_SIDE_LENGTH);
 
     // Textures
     const head_texture = try rl.loadTexture("head.png");
@@ -446,6 +497,18 @@ pub fn main() !void {
     const left_saber_blade_texture = try rl.loadTexture("left_saber.png");
     const right_saber_blade_texture = try rl.loadTexture("right_saber.png");
 
+    const red_note_texture = try rl.loadTexture("red_note.png");
+    const blue_note_texture = try rl.loadTexture("blue_note.png");
+
+    const red_note_dot_texture = try rl.loadTexture("red_note_dot.png");
+    const blue_note_dot_texture = try rl.loadTexture("blue_note_dot.png");
+
+    rl.setTextureWrap(red_note_texture, .mirror_clamp);
+    rl.setTextureWrap(blue_note_texture, .mirror_clamp);
+
+    rl.setTextureWrap(red_note_dot_texture, .clamp);
+    rl.setTextureWrap(blue_note_dot_texture, .clamp);
+
     // Materials
     var head_material = try rl.loadMaterialDefault();
 
@@ -454,6 +517,12 @@ pub fn main() !void {
 
     var left_saber_blade_material = try rl.loadMaterialDefault();
     var right_saber_blade_material = try rl.loadMaterialDefault();
+
+    var red_note_material = try rl.loadMaterialDefault();
+    var blue_note_material = try rl.loadMaterialDefault();
+
+    var red_note_dot_material = try rl.loadMaterialDefault();
+    var blue_note_dot_material = try rl.loadMaterialDefault();
 
     rl.setMaterialTexture(&head_material, .albedo, head_texture);
 
@@ -465,6 +534,12 @@ pub fn main() !void {
 
     rl.setMaterialTexture(&left_saber_blade_material, .emission, left_saber_blade_texture);
     rl.setMaterialTexture(&right_saber_blade_material, .emission, right_saber_blade_texture);
+
+    rl.setMaterialTexture(&red_note_material, .albedo, red_note_texture);
+    rl.setMaterialTexture(&blue_note_material, .albedo, blue_note_texture);
+
+    rl.setMaterialTexture(&red_note_dot_material, .albedo, red_note_dot_texture);
+    rl.setMaterialTexture(&blue_note_dot_material, .albedo, blue_note_dot_texture);
 
     rl.playMusicStream(music);
 
@@ -530,14 +605,14 @@ pub fn main() !void {
             const interpolated_right_hand_rotation = lerpSlice(replay.frames.items(.right_hand_rotation), interpolated_frame_index);
 
             // Head
-            drawHead(interpolated_head_position, interpolated_head_rotation, head_mesh, head_material);
+            drawHead(interpolated_head_position, interpolated_head_rotation, &head_mesh, &head_material);
 
             // Left hand
-            drawSaber(interpolated_left_hand_position, interpolated_left_hand_rotation, saber_hilt_mesh, left_saber_hilt_material, saber_blade_mesh, left_saber_blade_material);
+            drawSaber(interpolated_left_hand_position, interpolated_left_hand_rotation, &saber_hilt_mesh, &left_saber_hilt_material, &saber_blade_mesh, &left_saber_blade_material);
             drawSaberTrail(replay.frames.items(.left_hand_position), replay.frames.items(.left_hand_rotation), @floatCast(replay_time), replay.frames.items(.time), .red);
 
             // Right hand
-            drawSaber(interpolated_right_hand_position, interpolated_right_hand_rotation, saber_hilt_mesh, right_saber_hilt_material, saber_blade_mesh, right_saber_blade_material);
+            drawSaber(interpolated_right_hand_position, interpolated_right_hand_rotation, &saber_hilt_mesh, &right_saber_hilt_material, &saber_blade_mesh, &right_saber_blade_material);
             drawSaberTrail(replay.frames.items(.right_hand_position), replay.frames.items(.right_hand_rotation), @floatCast(replay_time), replay.frames.items(.time), .blue);
 
             // Note events
@@ -545,7 +620,7 @@ pub fn main() !void {
             const lookbehind: f64 = 1.0;
             const actual_height = if (replay.height <= 0.05) replay.heights.items(.height)[0] else replay.height;
 
-            for (replay.notes.items(.event_time), replay.notes.items(.spawn_time), replay.notes.items(.line_index), replay.notes.items(.line_layer), replay.notes.items(.cut_info), replay.notes.items(.color)) |event_time, spawn_time, line_index, line_layer, cut_info, note_color| {
+            for (replay.notes.items(.event_time), replay.notes.items(.spawn_time), replay.notes.items(.line_index), replay.notes.items(.line_layer), replay.notes.items(.cut_direction), replay.notes.items(.cut_info), replay.notes.items(.color)) |event_time, spawn_time, line_index, line_layer, note_direction, cut_info, note_color| {
                 if (event_time < replay_time - lookbehind) {
                     continue;
                 }
@@ -556,14 +631,16 @@ pub fn main() !void {
 
                 const z_time = computeTimedNoteZ(@floatCast(replay_time), spawn_time, replay.jump_distance);
 
-                const note_position: rl.Vector3 = computeNotePosition(line_index, line_layer, z_time, actual_height);
+                const note_position = computeNotePosition(line_index, line_layer, z_time, actual_height);
+                const note_transform = computeNoteTransform(note_position, note_direction);
 
                 if (replay_time < event_time) {
-                    drawNote(note_position, getNoteColor(note_color));
+                    drawNote(&note_mesh, &red_note_material, &red_note_dot_material, &blue_note_material, &blue_note_dot_material, note_color, note_transform, note_direction);
                 }
 
                 if (cut_info) |info| {
                     const frozen_note_position: rl.Vector3 = .init(note_position.x, note_position.y, computeTimedNoteZ(event_time, spawn_time, replay.jump_distance));
+                    //const frozen_note_transform = computeNoteTransform(frozen_note_position, note_direction);
 
                     // Postcut animation
                     if (replay_time > event_time) {
@@ -574,7 +651,7 @@ pub fn main() !void {
                         const score_color = withAlpha(getHSVColor(score), fade_color.a);
 
                         rl.drawSphere(frozen_note_position, info.cut_distance_to_center, fade_color);
-                        drawNote(frozen_note_position, withAlpha(getNoteColor(note_color), fade_color.a));
+                        rl.drawCubeWiresV(frozen_note_position, CUBE_SIZE, withAlpha(getNoteColor(note_color), fade_color.a));
 
                         const cut_direction = rl.Vector3.init(info.cut_normal.x, info.cut_normal.y, 0.0).perpendicular().negate().normalize();
                         rl.drawLine3D(toRaylib(info.cut_point), toRaylib(info.cut_point.add(cut_direction.scale(@floatCast(@min(CUT_VISUAL_LENGTH, (replay_time - event_time) * info.saber_speed))))), fade_color);
@@ -582,7 +659,7 @@ pub fn main() !void {
                         const flyaway_vector = cut_direction.scale(info.saber_speed / 5.0);
                         const point = rl.Vector3.lerp(info.cut_point, info.cut_point.add(flyaway_vector), animation_progress);
                         const scale = @max(0.0, 1.0 - animation_progress * 0.3);
-                        rl.drawCubeV(toRaylib(point), CUBE_SIZE.scale(scale), score_color);
+                        rl.drawSphere(toRaylib(point), 0.2 * scale, score_color);
 
                         camera.end();
                         defer camera.begin();
@@ -609,6 +686,8 @@ pub fn main() !void {
         const forward_quaternion: rl.Quaternion = rl.Quaternion.fromVector3ToVector3(.init(0, 0, 0), .init(0, 0, 1));
 
         const sample_start: usize = @intCast(@max(1, @as(i64, @intCast(frame_index)) - GRAPH_SAMPLE_SIZE));
+
+        // TODO: Use swing-twist decomposition to show left and right hand motion
 
         // Left hand motion
         var left_hand_angles: [GRAPH_SAMPLE_SIZE]f32 = .{0.0} ** GRAPH_SAMPLE_SIZE;
@@ -650,8 +729,6 @@ pub fn main() !void {
             }
 
             if (cut_info) |cut| {
-                // FIXME: SLOW!!!
-
                 switch (color) {
                     .red => cut_scores_left[i] = @floatFromInt(computeCutScore(cut)),
                     .blue => cut_scores_right[i] = @floatFromInt(computeCutScore(cut)),
