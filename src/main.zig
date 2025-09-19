@@ -8,7 +8,12 @@ const UP: rl.Vector3 = .{ .x = 0.0, .y = 1.0, .z = 0.0 };
 const ONE: rl.Vector3 = .{ .x = 1.0, .y = 1.0, .z = 1.0 };
 
 const GRAPH_SAMPLE_SIZE: usize = 100;
-const CUBE_SIZE: f32 = 0.4;
+const CUBE_SIDE_LENGTH: f32 = 0.4;
+const CUBE_SIZE: rl.Vector3 = .{ .x = CUBE_SIDE_LENGTH, .y = CUBE_SIDE_LENGTH, .z = CUBE_SIDE_LENGTH };
+
+const CUT_VISUAL_LENGTH: f32 = 0.5;
+
+var REPLAY_TO_RAYLIB: ?rl.Matrix = null;
 
 fn getHSVColor(score: i64) rl.Color {
     if (score >= 115) {
@@ -171,6 +176,28 @@ fn interpolateFrames(a: *const rp.ReplayFrame, b: *const rp.ReplayFrame, time: f
     };
 }
 
+fn lerpFrameIndexToNext(frame_index: usize, time: f32, frame_times: []f32) f64 {
+    const next_frame_index = frame_index + 1;
+
+    return @max(0.0, rl.math.remap(@floatCast(time), frame_times[frame_index], frame_times[next_frame_index], @floatFromInt(frame_index), @floatFromInt(next_frame_index)));
+}
+
+fn lerpSlice(slice: anytype, index: f32) std.meta.Elem(@TypeOf(slice)) {
+    const Type = std.meta.Elem(@TypeOf(slice));
+
+    const a_index: usize = @intFromFloat(@floor(index));
+    const b_index: usize = @intFromFloat(@ceil(index));
+    const progress: f32 = 1.0 - (@as(f32, @floatFromInt(b_index)) - index);
+
+    switch (Type) {
+        f32, f64 => return rl.lerp(slice[a_index], slice[b_index], progress),
+
+        rl.Vector3, rl.Quaternion => return slice[a_index].lerp(slice[b_index], progress),
+
+        else => @compileError("lerpSlice not implemented for " ++ @typeName(Type)),
+    }
+}
+
 fn drawLineGraph(x: i32, y: i32, width: i32, height: i32, min_y: f32, max_y: f32, values: []f32, line_color: rl.Color, border_width: f32, border_color: rl.Color, zero_line: bool, gpa: std.mem.Allocator) !void {
     // Draw border
     //rl.drawRectangleLinesEx(.init(@floatFromInt(x), @floatFromInt(y), @floatFromInt(width), @floatFromInt(height)), border_width, border_color);
@@ -194,23 +221,23 @@ fn drawLineGraph(x: i32, y: i32, width: i32, height: i32, min_y: f32, max_y: f32
     rl.drawLineStrip(points, line_color);
 }
 
-fn drawSaber(position: rl.Vector3, rotation: rl.Quaternion, hilt_mesh: rl.Mesh, hilt_material: rl.Material, blade_mesh: rl.Mesh, blade_material: rl.Material, matrix: rl.Matrix) void {
+fn drawSaber(position: rl.Vector3, rotation: rl.Quaternion, hilt_mesh: rl.Mesh, hilt_material: rl.Material, blade_mesh: rl.Mesh, blade_material: rl.Material) void {
     const rotation_matrix = rl.Quaternion.toMatrix(rotation);
     const transform = rl.Matrix.multiply(rotation_matrix, rl.Matrix.translate(position.x, position.y, position.z));
 
-    rl.drawMesh(hilt_mesh, hilt_material, transform.multiply(matrix));
+    rl.drawMesh(hilt_mesh, hilt_material, toRaylib(transform));
 
     const rotation_matrix_blade = rl.Matrix.rotateX(std.math.pi / 2.0).multiply(rl.Quaternion.toMatrix(rotation));
-    const transform_blade = rl.Matrix.multiply(rotation_matrix_blade, rl.Matrix.translate(position.x, position.y, position.z));
+    const blade_transform = rl.Matrix.multiply(rotation_matrix_blade, rl.Matrix.translate(position.x, position.y, position.z));
 
-    rl.drawMesh(blade_mesh, blade_material, transform_blade.multiply(matrix));
+    rl.drawMesh(blade_mesh, blade_material, toRaylib(blade_transform));
 }
 
-fn drawHead(position: rl.Vector3, rotation: rl.Quaternion, mesh: rl.Mesh, material: rl.Material, matrix: rl.Matrix) void {
+fn drawHead(position: rl.Vector3, rotation: rl.Quaternion, mesh: rl.Mesh, material: rl.Material) void {
     const rotation_matrix = rl.Quaternion.toMatrix(rotation);
     const transform = rl.Matrix.scale(1.0, -1.0, 1.0).multiply(rotation_matrix).multiply(rl.Matrix.translate(position.x, position.y, position.z));
 
-    rl.drawMesh(mesh, material, transform.multiply(matrix));
+    rl.drawMesh(mesh, material, toRaylib(transform));
 }
 
 fn inputNumber() !u32 {
@@ -228,8 +255,54 @@ fn inputNumber() !u32 {
     return try std.fmt.parseInt(u32, input_line, 10);
 }
 
+fn toRaylib(v: anytype) @TypeOf(v) {
+    const Type = @TypeOf(v);
+
+    if (REPLAY_TO_RAYLIB) |matrix| {
+        switch (Type) {
+            rl.Matrix => return v.multiply(matrix),
+            rl.Vector3 => return v.transform(matrix),
+            else => unreachable,
+        }
+    } else {
+        return v;
+    }
+}
+
+fn getNoteColor(color: rp.NoteColor) rl.Color {
+    return switch (color) {
+        .red => .red,
+        .blue => .blue,
+
+        else => .magenta,
+    };
+}
+
+fn drawNote(position: rl.Vector3, color: rl.Color) void {
+    rl.drawCubeWiresV(position, CUBE_SIZE, color);
+}
+
+fn computeNotePosition(line_index: i32, line_layer: i32, z: f32, height: f32) rl.Vector3 {
+    const line_index_f: f32 = @floatFromInt(2 - line_index);
+    const line_layer_f: f32 = @floatFromInt(line_layer);
+
+    return .init(line_index_f / 2.0, line_layer_f / 2.0 + height - 1.0, z);
+}
+
+fn computeTimedNoteZ(replay_time: f32, spawn_time: f32, jump_distance: f32) f32 {
+    return (spawn_time - @as(f32, @floatCast(replay_time))) * jump_distance;
+}
+
+fn withAlpha(color: rl.Color, alpha: u8) rl.Color {
+    return .init(color.r, color.g, color.b, alpha);
+}
+
+fn quaternionConjugate(q: rl.Quaternion) rl.Quaternion {
+    return .{ .x = -q.x, .y = -q.y, .z = -q.z, .w = q.w };
+}
+
 pub fn main() !void {
-    const FLIP = rl.Matrix.scale(-1.0, 1.0, 1.0);
+    REPLAY_TO_RAYLIB = rl.Matrix.scale(-1.0, 1.0, 1.0);
 
     // Initialization
     const screen_width = 1600;
@@ -244,8 +317,8 @@ pub fn main() !void {
     rl.setTargetFPS(120);
 
     var camera = rl.Camera{
-        .position = .init(2, 2, 2),
-        .target = .init(0, 0, 0),
+        .position = .init(-1, 2, -3.5),
+        .target = .init(0, 1, 0),
         .up = .init(0, 1, 0),
         .fovy = 70,
         .projection = .perspective,
@@ -373,21 +446,35 @@ pub fn main() !void {
                 frame_index -= 1;
             }
 
-            const interpolated_frame = interpolateFrames(&replay.frames.get(frame_index), &replay.frames.get(frame_index + 1), replay_time);
+            if (frame_index >= replay.frames.len) {
+                break;
+            }
+
+            //const interpolated_frame = interpolateFrames(&replay.frames.get(frame_index), &replay.frames.get(frame_index + 1), replay_time);
+            const interpolated_frame_index: f32 = @floatCast(lerpFrameIndexToNext(frame_index, @floatCast(replay_time), replay.frames.items(.time)));
+
+            const interpolated_head_position = lerpSlice(replay.frames.items(.head_position), interpolated_frame_index);
+            const interpolated_head_rotation = lerpSlice(replay.frames.items(.head_rotation), interpolated_frame_index);
+            const interpolated_left_hand_position = lerpSlice(replay.frames.items(.left_hand_position), interpolated_frame_index);
+            const interpolated_left_hand_rotation = lerpSlice(replay.frames.items(.left_hand_rotation), interpolated_frame_index);
+            const interpolated_right_hand_position = lerpSlice(replay.frames.items(.right_hand_position), interpolated_frame_index);
+            const interpolated_right_hand_rotation = lerpSlice(replay.frames.items(.right_hand_rotation), interpolated_frame_index);
 
             // Head
-            drawHead(interpolated_frame.head_position, interpolated_frame.head_rotation, head_mesh, head_material, FLIP);
+            drawHead(interpolated_head_position, interpolated_head_rotation, head_mesh, head_material);
 
             // Left hand
-            drawSaber(interpolated_frame.left_hand_position, interpolated_frame.left_hand_rotation, saber_hilt_mesh, left_saber_hilt_material, saber_blade_mesh, left_saber_blade_material, FLIP);
+            drawSaber(interpolated_left_hand_position, interpolated_left_hand_rotation, saber_hilt_mesh, left_saber_hilt_material, saber_blade_mesh, left_saber_blade_material);
 
             // Right hand
-            drawSaber(interpolated_frame.right_hand_position, interpolated_frame.right_hand_rotation, saber_hilt_mesh, right_saber_hilt_material, saber_blade_mesh, right_saber_blade_material, FLIP);
+            drawSaber(interpolated_right_hand_position, interpolated_right_hand_rotation, saber_hilt_mesh, right_saber_hilt_material, saber_blade_mesh, right_saber_blade_material);
 
-            // Draw cut points for note events
+            // Note events
             const lookahead: f64 = 2.0;
             const lookbehind: f64 = 1.0;
-            for (replay.notes.items(.event_time), replay.notes.items(.spawn_time), replay.notes.items(.line_index), replay.notes.items(.line_layer), replay.notes.items(.cut_info), replay.notes.items(.color)) |event_time, spawn_time, line_index, line_layer, cut_info, color| {
+            const actual_height = if (replay.height <= 0.05) replay.heights.items(.height)[0] else replay.height;
+
+            for (replay.notes.items(.event_time), replay.notes.items(.spawn_time), replay.notes.items(.line_index), replay.notes.items(.line_layer), replay.notes.items(.cut_info), replay.notes.items(.color)) |event_time, spawn_time, line_index, line_layer, cut_info, note_color| {
                 if (event_time < replay_time - lookbehind) {
                     continue;
                 }
@@ -396,54 +483,40 @@ pub fn main() !void {
                     break;
                 }
 
-                const note_color: rl.Color = switch (color) {
-                    .red => .red,
-                    else => .blue,
-                };
-                const line_index_f: f32 = @floatFromInt(2 - line_index);
-                const line_layer_f: f32 = @floatFromInt(line_layer);
+                const z_time = computeTimedNoteZ(@floatCast(replay_time), spawn_time, replay.jump_distance);
 
-                const time_distance_offset: f32 = (spawn_time - @as(f32, @floatCast(replay_time))) * replay.jump_distance;
-                const note_position: rl.Vector3 = .init(line_index_f / 2.0, replay.height + line_layer_f / 2.0 - 1.0, time_distance_offset);
+                const note_position: rl.Vector3 = computeNotePosition(line_index, line_layer, z_time, actual_height);
 
                 if (replay_time < event_time) {
-                    rl.drawCubeWiresV(note_position, .init(CUBE_SIZE, CUBE_SIZE, CUBE_SIZE), note_color);
+                    drawNote(note_position, getNoteColor(note_color));
                 }
 
                 if (cut_info) |info| {
-                    const timed_cut_point = rl.Vector3.init(info.cut_point.x, info.cut_point.y, time_distance_offset);
-                    _ = timed_cut_point;
-
-                    // Cut point fly-in animation
-                    const total_animation_time = @max(0.0, @min(1.0, 10.0 / info.saber_speed));
-                    const animation_start_time = event_time - total_animation_time;
-                    const time_to_animation = animation_start_time - replay_time;
-
-                    if (time_to_animation > 0.0) {
-                        continue;
-                    }
-
-                    var animation_progress = rl.math.remap(@floatCast(replay_time), animation_start_time, event_time, 0.0, 1.0);
+                    const frozen_note_position: rl.Vector3 = .init(note_position.x, note_position.y, computeTimedNoteZ(event_time, spawn_time, replay.jump_distance));
 
                     // Postcut animation
-                    if (animation_progress > 1.0) {
-                        const animation_end_time = event_time + total_animation_time;
-                        animation_progress = rl.math.remap(@floatCast(replay_time), event_time, animation_end_time, 0.0, 1.0);
-                        const fade_progress = rl.math.remap(@floatCast(replay_time), event_time, @floatCast(event_time + lookbehind), 0.0, 1.0);
+                    if (replay_time > event_time) {
+                        const animation_progress = rl.math.remap(@floatCast(replay_time), event_time, @floatCast(event_time + lookbehind), 0.0, 1.0);
 
-                        const fade_color: rl.Color = .init(255, 255, 255, @as(u8, @intFromFloat(std.math.clamp(255.0 - fade_progress * 255.0, 0.0, 255.0))));
+                        const fade_color: rl.Color = .init(175, 175, 175, @as(u8, @intFromFloat(std.math.clamp(255.0 - animation_progress * 255.0, 0.0, 255.0))));
                         const score: i32 = @intFromFloat(std.math.clamp(70.0 * info.before_cut_rating, 0.0, 70.0) + std.math.clamp(30.0 * info.after_cut_rating, 0.0, 30.0) + std.math.clamp((1.0 - std.math.clamp(info.cut_distance_to_center / 0.3, 0.0, 1.0)) * 15.0, 0.0, 15.0));
-                        var score_color = getHSVColor(score);
-                        score_color.a = fade_color.a;
+                        const score_color = withAlpha(getHSVColor(score), fade_color.a);
 
-                        const point = rl.Vector3.lerp(info.cut_point, info.cut_point.add(info.saber_direction.scale(info.saber_speed / 15.0)), animation_progress);
-                        const scale = @max(0.0, 1.0 - animation_progress) * CUBE_SIZE;
-                        rl.drawCubeV(point.transform(FLIP), .init(scale, scale, scale), score_color);
+                        rl.drawSphere(frozen_note_position, info.cut_distance_to_center, fade_color);
+                        drawNote(frozen_note_position, withAlpha(getNoteColor(note_color), fade_color.a));
+
+                        const cut_direction = rl.Vector3.init(info.cut_normal.x, info.cut_normal.y, 0.0).perpendicular().negate().normalize();
+                        rl.drawLine3D(toRaylib(info.cut_point), toRaylib(info.cut_point.add(cut_direction.scale(@floatCast(@min(CUT_VISUAL_LENGTH, (replay_time - event_time) * info.saber_speed))))), fade_color);
+
+                        const flyaway_vector = cut_direction.scale(info.saber_speed / 5.0);
+                        const point = rl.Vector3.lerp(info.cut_point, info.cut_point.add(flyaway_vector), animation_progress);
+                        const scale = @max(0.0, 1.0 - animation_progress * 0.3);
+                        rl.drawCubeV(toRaylib(point), CUBE_SIZE.scale(scale), score_color);
 
                         camera.end();
                         defer camera.begin();
 
-                        const screen_space_point = rl.getWorldToScreen(.init(note_position.x, note_position.y, info.cut_point.transform(FLIP).z), camera);
+                        const screen_space_point = rl.getWorldToScreen(frozen_note_position, camera);
 
                         if (std.math.isNormal(screen_space_point.x) and std.math.isNormal(screen_space_point.y) and @abs(screen_space_point.x) < @as(f64, @floatFromInt(std.math.maxInt(i32))) and @abs(screen_space_point.y) < @as(f64, @floatFromInt(std.math.maxInt(i32)))) {
                             rl.drawText(rl.textFormat("%03i", .{score}), @as(i32, @intFromFloat(screen_space_point.x)), @as(i32, @intFromFloat(screen_space_point.y)), 25, score_color);
@@ -455,37 +528,37 @@ pub fn main() !void {
             rl.drawGrid(10, 0.5);
         }
 
-        const y_min = 3.0;
-        const y_max = 5.0;
+        const y_min = -std.math.pi;
+        const y_max = std.math.pi;
 
         var axis: rl.Vector3 = undefined;
         var angle: f32 = undefined;
 
-        const forward_quaternion = rl.Quaternion.fromVector3ToVector3(.init(0, 0, 0), FORWARD);
+        const forward_quaternion: rl.Quaternion = rl.Quaternion.fromVector3ToVector3(.init(0, 0, 0), .init(0, 0, 1));
 
         // Left hand motion
         var left_hand_angles: [GRAPH_SAMPLE_SIZE]f32 = .{0.0} ** GRAPH_SAMPLE_SIZE;
         var last_rotation = replay.frames.items(.left_hand_rotation)[0];
 
-        for (1.., replay.frames.items(.left_hand_rotation)[@intCast(@max(1, @as(i64, @intCast(frame_index)) - GRAPH_SAMPLE_SIZE + 1))..frame_index]) |i, rotation| {
-            rotation.subtract(forward_quaternion).toAxisAngle(&axis, &angle);
+        for (0.., replay.frames.items(.left_hand_rotation)[@intCast(@max(1, @as(i64, @intCast(frame_index)) - GRAPH_SAMPLE_SIZE))..frame_index]) |i, rotation| {
+            forward_quaternion.subtract(rotation).toAxisAngle(&axis, &angle);
             left_hand_angles[i] = angle;
             last_rotation = rotation;
         }
 
-        try drawLineGraph(0, 0, 400, 200, y_min + 1.0, y_max + 1.0, left_hand_angles[1..], .red, 2, .white, false, allocator);
+        try drawLineGraph(0, 0, 400, 200, y_min, y_max, &left_hand_angles, .red, 2, .white, false, allocator);
 
         // Right hand motion
         var right_hand_angles: [GRAPH_SAMPLE_SIZE]f32 = .{0.0} ** GRAPH_SAMPLE_SIZE;
         last_rotation = replay.frames.items(.right_hand_rotation)[0];
 
-        for (1.., replay.frames.items(.right_hand_rotation)[@intCast(@max(1, @as(i64, @intCast(frame_index)) - GRAPH_SAMPLE_SIZE + 1))..frame_index]) |i, rotation| {
-            rotation.subtract(forward_quaternion).toAxisAngle(&axis, &angle);
+        for (0.., replay.frames.items(.right_hand_rotation)[@intCast(@max(1, @as(i64, @intCast(frame_index)) - GRAPH_SAMPLE_SIZE))..frame_index]) |i, rotation| {
+            forward_quaternion.subtract(rotation).toAxisAngle(&axis, &angle);
             right_hand_angles[i] = angle;
             last_rotation = rotation;
         }
 
-        try drawLineGraph(0, 0, 400, 200, y_min, y_max, right_hand_angles[1..], .blue, 2, .white, false, allocator);
+        try drawLineGraph(0, 0, 400, 200, y_min, y_max, &right_hand_angles, .blue, 2, .white, false, allocator);
 
         var buffer: [4096]u8 = undefined;
         const text = try std.fmt.bufPrintZ(&buffer, "Player name: {s}\nHeadset: {s}\nMap: {s} ({s})\nMapped by: {s}\nJ/D: {}\nHeight: {}\nFrame: {}\nTotal frames: {}", .{ replay.player_name, replay.hmd, replay.song_name, replay.difficulty_name, replay.mapper_name, replay.jump_distance, replay.height, frame_index, replay.frames.len });
