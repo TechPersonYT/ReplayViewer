@@ -360,12 +360,12 @@ fn computeNoteTransform(note_position: rl.Vector3, note_direction: rp.CutDirecti
     return rl.Matrix.multiply(switch (note_direction) {
         .up => rl.Matrix.identity(),
         .down => rl.Matrix.rotateZ(std.math.pi),
-        .left => rl.Matrix.rotateZ(-std.math.pi * 0.5),
+        .left => rl.Matrix.rotateZ(std.math.pi * -0.5),
         .right => rl.Matrix.rotateZ(std.math.pi * 0.5),
 
-        .up_left => rl.Matrix.rotateZ(-std.math.pi * 0.25),
+        .up_left => rl.Matrix.rotateZ(std.math.pi * -0.25),
         .up_right => rl.Matrix.rotateZ(std.math.pi * 0.25),
-        .down_left => rl.Matrix.rotateZ(std.math.pi * 1.5),
+        .down_left => rl.Matrix.rotateZ(std.math.pi * -0.75),
         .down_right => rl.Matrix.rotateZ(std.math.pi * 0.75),
 
         else => rl.Matrix.identity(),
