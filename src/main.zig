@@ -1,6 +1,7 @@
 const std = @import("std");
 const rl = @import("raylib");
 const rp = @import("replay.zig");
+const io = @import("io.zig");
 const tweens = @import("tweens.zig");
 
 const FORWARD: rl.Vector3 = .{ .x = 0.0, .y = 0.0, .z = 1.0 };
@@ -23,6 +24,10 @@ const TRAIL_ITERATIONS = 120;
 const SABER_LENGTH: f32 = 1.5;
 
 var REPLAY_TO_RAYLIB: ?rl.Matrix = null;
+
+const DOWNLOADED_MAP_FILENAME: []const u8 = "downloaded_map.bsor";
+const EXTRACTED_MAP_DIRECTORY: []const u8 = "extracted_map";
+const CONVERTED_MUSIC_FILENAME: []const u8 = "converted_music.wav";
 
 const SwingTwistDecomposition = struct {
     swing: f32,
@@ -77,151 +82,6 @@ fn getHSVColor(score: i64) rl.Color {
     }
 }
 
-const WebReplayInfo = struct {
-    replay_url: []u8,
-    map_url: []u8,
-};
-
-fn fetchReplayInfoFromID(id: u32, gpa: std.mem.Allocator) !WebReplayInfo {
-    std.debug.print("Fetching replay info from API\n", .{});
-
-    const url = try std.fmt.allocPrint(gpa, "https://api.beatleader.xyz/score/{}", .{id});
-    defer gpa.free(url);
-
-    var client: std.http.Client = .{ .allocator = gpa };
-    defer client.deinit();
-
-    var response_writer = std.Io.Writer.Allocating.init(gpa);
-    defer response_writer.deinit();
-
-    const response = try client.fetch(.{ .method = .GET, .location = .{ .url = url }, .response_writer = &response_writer.writer });
-
-    if (response.status != .ok) {
-        return error.HTTP;
-    }
-
-    const data = try response_writer.toOwnedSlice();
-    defer gpa.free(data);
-
-    const json = try std.json.parseFromSlice(std.json.Value, gpa, data, .{});
-    defer json.deinit();
-
-    const replay_url = json.value.object.get("replay").?.string;
-    const owned_replay_url = try gpa.alloc(u8, replay_url.len);
-    @memcpy(owned_replay_url, replay_url);
-
-    const map_url = json.value.object.get("song").?.object.get("downloadUrl").?.string;
-    const owned_map_url = try gpa.alloc(u8, map_url.len);
-    @memcpy(owned_map_url, map_url);
-
-    return .{ .replay_url = owned_replay_url, .map_url = owned_map_url };
-}
-
-fn downloadReplay(url: []u8, gpa: std.mem.Allocator) !rp.Replay {
-    std.debug.print("Downloading replay\n", .{});
-
-    var client: std.http.Client = .{ .allocator = gpa };
-    defer client.deinit();
-
-    var response_writer = std.Io.Writer.Allocating.init(gpa);
-    const response = try client.fetch(.{ .method = .GET, .location = .{ .url = url }, .response_writer = &response_writer.writer });
-
-    if (response.status != .ok) {
-        return error.HTTP;
-    }
-
-    var reader = std.Io.Reader.fixed(try response_writer.toOwnedSlice());
-    defer gpa.free(reader.buffer);
-
-    std.debug.print("Parsing replay\n", .{});
-
-    return rp.parseReplay(&reader, gpa);
-}
-
-fn downloadMusic(url: []u8, gpa: std.mem.Allocator) !rl.Music {
-    var client: std.http.Client = .{ .allocator = gpa };
-    defer client.deinit();
-
-    std.debug.print("Downloading map\n", .{});
-
-    var response_writer = std.Io.Writer.Allocating.init(gpa);
-    const response = try client.fetch(.{ .method = .GET, .location = .{ .url = url }, .response_writer = &response_writer.writer });
-
-    if (response.status != .ok) {
-        return error.HTTP;
-    }
-
-    const zipped = try response_writer.toOwnedSlice();
-    defer gpa.free(zipped);
-
-    try std.fs.cwd().writeFile(.{ .sub_path = "the_map.zip", .data = zipped });
-    try std.fs.cwd().makePath("map_extracted");
-
-    std.debug.print("Unzipping map\n", .{});
-    {
-        var directory = try std.fs.cwd().openDir("map_extracted", .{ .iterate = true });
-        defer directory.close();
-
-        const song_file = try std.fs.cwd().openFile("the_map.zip", .{});
-        defer song_file.close();
-
-        const unzip_buffer = try gpa.alloc(u8, 100000000);
-        defer gpa.free(unzip_buffer);
-
-        var reader = song_file.reader(unzip_buffer);
-        try std.zip.extract(directory, &reader, .{});
-    }
-
-    std.debug.print("Converting music\n", .{});
-    const result = try std.process.Child.run(.{ .allocator = gpa, .argv = &.{ "bash", "-c", "ffmpeg -y -i map_extracted/*.egg song.wav" } });
-    defer gpa.free(result.stdout);
-    defer gpa.free(result.stderr);
-
-    std.debug.print("Song conversion output: '{s}\n{s}'\n", .{ result.stdout, result.stderr });
-
-    std.debug.print("Loading music\n", .{});
-    const sound = rl.loadMusicStream("song.wav");
-
-    try std.fs.cwd().deleteTree("map_extracted");
-    try std.fs.cwd().deleteFile("the_map.zip");
-
-    return sound;
-}
-
-const TransformInfo = struct { position: rl.Vector3, rotation: rl.Quaternion, rotation_matrix: rl.Matrix, rotation_axis: rl.Vector3, rotation_angle: f64, transform: rl.Matrix, direction: rl.Vector3 };
-
-fn computeAllForms(position: rl.Vector3, rotation: rl.Quaternion) TransformInfo {
-    const rotation_matrix = rl.Quaternion.toMatrix(rotation);
-
-    var rotation_axis: rl.Vector3 = undefined;
-    var rotation_angle: f32 = 0.0;
-    rl.Quaternion.toAxisAngle(rotation, &rotation_axis, &rotation_angle);
-
-    const transform = rl.Matrix.multiply(rotation_matrix, rl.Matrix.translate(position.x, position.y, position.z));
-
-    const direction = FORWARD.transform(rotation_matrix);
-
-    return .{ .position = position, .rotation = rotation, .rotation_matrix = rotation_matrix, .rotation_axis = rotation_axis, .rotation_angle = rotation_angle, .transform = transform, .direction = direction };
-}
-
-fn interpolateFrames(a: *const rp.ReplayFrame, b: *const rp.ReplayFrame, time: f64) rp.ReplayFrame {
-    const t = rl.math.remap(@floatCast(time), a.time, b.time, 0.0, 1.0);
-
-    return .{
-        .time = rl.math.lerp(a.time, b.time, t),
-        .fps = b.fps,
-
-        .head_position = rl.Vector3.lerp(a.head_position, b.head_position, t),
-        .head_rotation = rl.Quaternion.lerp(a.head_rotation, b.head_rotation, t),
-
-        .left_hand_position = rl.Vector3.lerp(a.left_hand_position, b.left_hand_position, t),
-        .left_hand_rotation = rl.Quaternion.lerp(a.left_hand_rotation, b.left_hand_rotation, t),
-
-        .right_hand_position = rl.Vector3.lerp(a.right_hand_position, b.right_hand_position, t),
-        .right_hand_rotation = rl.Quaternion.lerp(a.right_hand_rotation, b.right_hand_rotation, t),
-    };
-}
-
 fn lerpFrameIndexToNext(frame_index: usize, time: f32, frame_times: []f32) f32 {
     const next_frame_index = frame_index + 1;
 
@@ -244,7 +104,7 @@ fn lerpSlice(slice: anytype, index: f32) std.meta.Elem(@TypeOf(slice)) {
     }
 }
 
-fn drawLineGraph(x: i32, y: i32, width: i32, height: i32, min_y: f32, max_y: f32, mid_y: f32, values: []f32, line_color: rl.Color, border_width: f32, border_color: rl.Color, zero_line: bool, gpa: std.mem.Allocator) !void {
+fn drawLineGraph(x: i32, y: i32, width: i32, height: i32, min_y: f32, max_y: f32, mid_y: f32, values: []f32, line_color: rl.Color, border_width: f32, border_color: rl.Color, zero_line: bool, allocator: std.mem.Allocator) !void {
     // Draw border
     //rl.drawRectangleLinesEx(.init(@floatFromInt(x), @floatFromInt(y), @floatFromInt(width), @floatFromInt(height)), border_width, border_color);
     _ = border_width;
@@ -256,8 +116,8 @@ fn drawLineGraph(x: i32, y: i32, width: i32, height: i32, min_y: f32, max_y: f32
         rl.drawLine(0, zero, width, zero, .gray);
     }
 
-    var points: []rl.Vector2 = try gpa.alloc(rl.Vector2, values.len);
-    defer gpa.free(points);
+    var points: []rl.Vector2 = try allocator.alloc(rl.Vector2, values.len);
+    defer allocator.free(points);
 
     for (0..values.len, values) |xp, yp| {
         points[xp] = .init(rl.math.remap(@floatFromInt(xp), 0, @floatFromInt(values.len - 1), @floatFromInt(x), @floatFromInt(x + width)), rl.math.remap(yp, min_y, max_y, @floatFromInt(y), @floatFromInt(y + height)));
@@ -508,19 +368,20 @@ pub fn main() !void {
 
     // Get replay
     _ = try std.fs.File.stdout().write("Enter replay ID: ");
-    const replay_web_info = try fetchReplayInfoFromID(try inputNumber(), allocator);
+    const replay_web_info = try io.fetchReplayInfoFromID(try inputNumber(), allocator);
     const replay_url = replay_web_info.replay_url;
     const map_url = replay_web_info.map_url;
 
-    std.debug.print("Replay URL: {s}\nMap URL: {s}\n", .{ replay_url, map_url });
+    std.debug.print("Replay URL: {s}\nMap URL: {s}\n", replay_web_info);
     defer allocator.free(replay_url);
     defer allocator.free(map_url);
 
-    var replay = try downloadReplay(replay_url, allocator);
+    var replay = try io.downloadReplay(replay_url, allocator);
     //var replay = try rp.parseReplayFile("replay.bsor", allocator);
     defer replay.deinit(allocator);
 
-    const music = try downloadMusic(map_url, allocator);
+    const map, const music = try io.downloadMapAndMusic(map_url, DOWNLOADED_MAP_FILENAME, EXTRACTED_MAP_DIRECTORY, CONVERTED_MUSIC_FILENAME, allocator);
+    _ = map;
     //const music = try rl.loadMusicStream("song.wav");
 
     std.debug.print("Parsed replay info:\n", .{});
@@ -641,7 +502,6 @@ pub fn main() !void {
                 break;
             }
 
-            //const interpolated_frame = interpolateFrames(&replay.frames.get(frame_index), &replay.frames.get(frame_index + 1), replay_time);
             const interpolated_frame_index: f32 = lerpFrameIndexToNext(frame_index, replay_time, replay.frames.items(.time));
 
             const interpolated_head_position = lerpSlice(replay.frames.items(.head_position), interpolated_frame_index);

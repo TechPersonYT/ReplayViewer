@@ -1,6 +1,4 @@
 const std = @import("std");
-const fs = @import("std").fs;
-
 const rl = @import("raylib");
 
 const ReplayFileSection = enum(u8) {
@@ -204,31 +202,33 @@ pub const Replay = struct {
         std.debug.print("Practice speed: {}\n", .{self.practice_speed});
     }
 
-    pub fn deinit(self: *Replay, gpa: std.mem.Allocator) void {
-        gpa.free(self.mod_version);
-        gpa.free(self.game_version);
-        gpa.free(self.timestamp);
-        gpa.free(self.player_id);
-        gpa.free(self.player_name);
-        gpa.free(self.platform);
-        gpa.free(self.tracking_system);
-        gpa.free(self.hmd);
-        gpa.free(self.controller);
-        gpa.free(self.map_hash);
-        gpa.free(self.song_name);
-        gpa.free(self.mapper_name);
-        gpa.free(self.difficulty_name);
-        gpa.free(self.game_mode);
-        gpa.free(self.environment);
-        gpa.free(self.modifiers);
-        self.frames.deinit(gpa);
-        self.notes.deinit(gpa);
-        self.walls.deinit(gpa);
-        self.heights.deinit(gpa);
-        self.pauses.deinit(gpa);
+    pub fn deinit(self: *Replay, allocator: std.mem.Allocator) void {
+        allocator.free(self.mod_version);
+        allocator.free(self.game_version);
+        allocator.free(self.timestamp);
+        allocator.free(self.player_id);
+        allocator.free(self.player_name);
+        allocator.free(self.platform);
+        allocator.free(self.tracking_system);
+        allocator.free(self.hmd);
+        allocator.free(self.controller);
+        allocator.free(self.map_hash);
+        allocator.free(self.song_name);
+        allocator.free(self.mapper_name);
+        allocator.free(self.difficulty_name);
+        allocator.free(self.game_mode);
+        allocator.free(self.environment);
+        allocator.free(self.modifiers);
+
+        // Arrays
+        self.frames.deinit(allocator);
+        self.notes.deinit(allocator);
+        self.walls.deinit(allocator);
+        self.heights.deinit(allocator);
+        self.pauses.deinit(allocator);
 
         if (self.user_data) |data| {
-            gpa.free(data);
+            allocator.free(data);
         }
     }
 };
@@ -237,9 +237,9 @@ fn getSection(reader: *std.Io.Reader) !ReplayFileSection {
     return @enumFromInt(try takeByte(reader));
 }
 
-fn takeString(reader: *std.Io.Reader, gpa: std.mem.Allocator) ![]u8 {
+fn takeString(reader: *std.Io.Reader, allocator: std.mem.Allocator) ![]u8 {
     const length = @as(u32, @intCast(try reader.takeInt(i32, .little)));
-    const buffer = try gpa.alloc(u8, length);
+    const buffer = try allocator.alloc(u8, length);
 
     @memcpy(buffer, try reader.take(length));
 
@@ -383,10 +383,10 @@ fn takePauseEvent(reader: *std.Io.Reader) !PauseEvent {
     return .{ .duration = try takeLong(reader), .time = try takeFloat(reader) };
 }
 
-fn takeArray(T: type, reader: *std.Io.Reader, gpa: std.mem.Allocator, parseFunction: fn (r: *std.Io.Reader) anyerror!T) !std.MultiArrayList(T) {
+fn takeArray(T: type, reader: *std.Io.Reader, allocator: std.mem.Allocator, parseFunction: fn (r: *std.Io.Reader) anyerror!T) !std.MultiArrayList(T) {
     var array: std.MultiArrayList(T) = .{};
     const capacity: usize = @intCast(try takeInt(reader));
-    try array.setCapacity(gpa, capacity);
+    try array.setCapacity(allocator, capacity);
 
     for (0..capacity) |_| {
         array.appendAssumeCapacity(try parseFunction(reader));
@@ -405,18 +405,18 @@ fn takeOffsets(reader: *std.Io.Reader) !ControllerOffsets {
     };
 }
 
-pub fn parseReplayFile(filename: []const u8, gpa: std.mem.Allocator) !Replay {
+pub fn parseReplayFile(filename: []const u8, allocator: std.mem.Allocator) !Replay {
     const file = try std.fs.cwd().openFile(filename, .{});
 
-    const buffer = try gpa.alloc(u8, try file.getEndPos() + 1);
-    defer gpa.free(buffer);
+    const buffer = try allocator.alloc(u8, try file.getEndPos() + 1);
+    defer allocator.free(buffer);
 
     var reader = file.reader(buffer).interface;
 
-    return parseReplay(&reader, gpa);
+    return parseReplay(&reader, allocator);
 }
 
-pub fn parseReplay(reader: *std.Io.Reader, gpa: std.mem.Allocator) !Replay {
+pub fn parseReplay(reader: *std.Io.Reader, allocator: std.mem.Allocator) !Replay {
     var replay: Replay = undefined;
     replay.offsets = null;
     replay.user_data = null;
@@ -429,25 +429,25 @@ pub fn parseReplay(reader: *std.Io.Reader, gpa: std.mem.Allocator) !Replay {
         return error.InvalidSectionStartByte;
     }
 
-    replay.mod_version     =     try takeString(reader, gpa);
-    replay.game_version    =     try takeString(reader, gpa);
-    replay.timestamp       =     try takeString(reader, gpa);
-    replay.player_id       =     try takeString(reader, gpa);
-    replay.player_name     =     try takeString(reader, gpa);
-    replay.platform        =     try takeString(reader, gpa);
-    replay.tracking_system =     try takeString(reader, gpa);
-    replay.hmd             =     try takeString(reader, gpa);
-    replay.controller      =     try takeString(reader, gpa);
-    replay.map_hash        =     try takeString(reader, gpa);
-    replay.song_name       =     try takeString(reader, gpa);
-    replay.mapper_name     =     try takeString(reader, gpa);
-    replay.difficulty_name =     try takeString(reader, gpa);
+    replay.mod_version     =     try takeString(reader, allocator);
+    replay.game_version    =     try takeString(reader, allocator);
+    replay.timestamp       =     try takeString(reader, allocator);
+    replay.player_id       =     try takeString(reader, allocator);
+    replay.player_name     =     try takeString(reader, allocator);
+    replay.platform        =     try takeString(reader, allocator);
+    replay.tracking_system =     try takeString(reader, allocator);
+    replay.hmd             =     try takeString(reader, allocator);
+    replay.controller      =     try takeString(reader, allocator);
+    replay.map_hash        =     try takeString(reader, allocator);
+    replay.song_name       =     try takeString(reader, allocator);
+    replay.mapper_name     =     try takeString(reader, allocator);
+    replay.difficulty_name =     try takeString(reader, allocator);
 
     replay.score           =     try takeInt(reader);
 
-    replay.game_mode       =     try takeString(reader, gpa);
-    replay.environment     =     try takeString(reader, gpa);
-    replay.modifiers       =     try takeString(reader, gpa);
+    replay.game_mode       =     try takeString(reader, allocator);
+    replay.environment     =     try takeString(reader, allocator);
+    replay.modifiers       =     try takeString(reader, allocator);
 
     replay.jump_distance =       try takeFloat(reader);
     replay.left_handed =         try takeBool(reader);
@@ -465,44 +465,9 @@ pub fn parseReplay(reader: *std.Io.Reader, gpa: std.mem.Allocator) !Replay {
             return error.InvalidSectionStartByte;
         }
 
-        array.* = try takeArray(ItemType, reader, gpa, parseFunction);
+        array.* = try takeArray(ItemType, reader, allocator, parseFunction);
     }
 
-//    // Frames section
-//    if (try getSection(reader) != .frames) {
-//        return error.InvalidSectionStartByte;
-//    }
-//
-//    replay.frames = try takeArray(ReplayFrame, reader, gpa, takeFrame);
-//
-//    // Notes section
-//    if (try getSection(reader) != .notes) {
-//        return error.InvalidSectionStartByte;
-//    }
-//
-//    replay.notes = try takeArray(NoteEvent, reader, gpa, takeNoteEvent);
-//
-//    // Walls section
-//    if (try getSection(reader) != .walls) {
-//        return error.InvalidSectionStartByte;
-//    }
-//
-//    replay.walls = try takeArray(WallEvent, reader, gpa, takeWallEvent);
-//
-//    // Heights section
-//    if (try getSection(reader) != .heights) {
-//        return error.InvalidSectionStartByte;
-//    }
-//
-//    replay.heights = try takeArray(HeightChangeEvent, reader, gpa, takeHeightEvent);
-//
-//    // Pauses section
-//    if (try getSection(reader) != .pauses) {
-//        return error.InvalidSectionStartByte;
-//    }
-//
-//    replay.pauses = try takeArray(PauseEvent, reader, gpa, takePauseEvent);
-//
     // Offsets section (optional)
     if (getSection(reader) catch .frames == .controller_offsets) {
         replay.offsets = try takeOffsets(reader);
@@ -510,7 +475,7 @@ pub fn parseReplay(reader: *std.Io.Reader, gpa: std.mem.Allocator) !Replay {
 
     // User data section (optional)
     if (getSection(reader) catch .frames == .user_data) {
-        replay.user_data = try takeString(reader, gpa);
+        replay.user_data = try takeString(reader, allocator);
     }
 
     return replay;
