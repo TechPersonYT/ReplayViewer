@@ -98,7 +98,8 @@ fn lerpSlice(slice: anytype, index: f32) std.meta.Elem(@TypeOf(slice)) {
     switch (Type) {
         f32, f64 => return rl.lerp(slice[a_index], slice[b_index], progress),
 
-        rl.Vector3, rl.Quaternion => return slice[a_index].lerp(slice[b_index], progress),
+        rl.Vector3 => return slice[a_index].lerp(slice[b_index], progress),
+        rl.Quaternion => return slice[a_index].slerp(slice[b_index], progress),
 
         else => @compileError("lerpSlice not implemented for " ++ @typeName(Type)),
     }
@@ -244,24 +245,6 @@ fn quaternionConjugate(q: rl.Quaternion) rl.Quaternion {
     return .{ .x = -q.x, .y = -q.y, .z = -q.z, .w = q.w };
 }
 
-fn frameFromReplayTime(replay_time: f32, frame_times: []f32) usize {
-    var frame_index: usize = 0;
-
-    while (@as(f64, @floatCast(frame_times[frame_index])) < replay_time) {
-        if (frame_index >= frame_times.len - 1) {
-            break;
-        }
-
-        frame_index += 1;
-    }
-
-    if (frame_index > 0) {
-        frame_index -= 1;
-    }
-
-    return frame_index;
-}
-
 fn computeCutScore(info: rp.CutInfo) i32 {
     return @intFromFloat(std.math.clamp(70.0 * info.before_cut_rating, 0.0, 70.0) + std.math.clamp(30.0 * info.after_cut_rating, 0.0, 30.0) + std.math.clamp((1.0 - std.math.clamp(info.cut_distance_to_center / 0.3, 0.0, 1.0)) * 15.0, 0.0, 15.0));
 }
@@ -270,13 +253,13 @@ fn drawSaberTrail(positions: []rl.Vector3, rotations: []rl.Quaternion, time: f32
     const iterations = TRAIL_ITERATIONS;
     const lookbehind = TRAIL_DURATION / @as(f32, @floatFromInt(iterations));
 
-    var last_frame = lerpFrameIndexToNext(frameFromReplayTime(time, times), time, times);
+    var last_frame = lerpFrameIndexToNext(replayTimeToIndex(time, times), time, times);
     var last_position = lerpSlice(positions, last_frame);
     var last_rotation = lerpSlice(rotations, last_frame);
 
     for (1..iterations) |i| {
         const new_time = time - @as(f32, @floatFromInt(i)) * lookbehind;
-        const frame = lerpFrameIndexToNext(frameFromReplayTime(new_time, times), new_time, times);
+        const frame = lerpFrameIndexToNext(replayTimeToIndex(new_time, times), new_time, times);
         const position = lerpSlice(positions, frame);
         const rotation = lerpSlice(rotations, frame);
 
@@ -296,15 +279,18 @@ fn orderF32(a: f32, b: f32) std.math.Order {
     return std.math.order(a, b);
 }
 
-// TODO: Assert somewhere that the slice is actually sorted by time with std.sort.isSorted()
+fn replayTimeToIndex(time: f32, times: []f32) usize {
+    return std.math.sub(usize, std.sort.lowerBound(f32, times, time, orderF32), 1) catch 0;
+}
+
 fn replayTimeRangeToSlice(start_time: f32, end_time: f32, slice: anytype, times: []f32) []std.meta.Elem(@TypeOf(slice)) {
-    const lower = std.sort.lowerBound(f32, times, start_time, orderF32);
+    const lower = replayTimeToIndex(start_time, times);
 
     if (lower == slice.len) {
         return &.{};
     }
 
-    const upper = std.sort.upperBound(f32, times, end_time, orderF32);
+    const upper = replayTimeToIndex(end_time, times);
 
     if (upper == slice.len) {
         return slice[lower..];
@@ -496,7 +482,8 @@ pub fn main() !void {
             replay_time = music_time + @as(f32, @floatCast(rl.getTime())) - last_music_sync;
 
             // Sync frame with replay time
-            frame_index = frameFromReplayTime(replay_time, replay.frames.items(.time));
+            // FIXME: If we didn't have a frame for this time, other events we did have might not be interpolated correctly
+            frame_index = replayTimeToIndex(replay_time, replay.frames.items(.time));
 
             if (frame_index + 2 >= replay.frames.len) {
                 break;
@@ -560,13 +547,13 @@ pub fn main() !void {
                         const score = computeCutScore(info);
                         const score_color = withAlpha(getHSVColor(score), fade_color.a);
 
-                        rl.drawLine3D(frozen_note_position, toRaylib(info.cut_point), fade_color);
+                        rl.drawLine3D(frozen_note_position, toRaylib(info.cut_point), withAlpha(.red, fade_color.a));
                         rl.drawCubeWiresV(frozen_note_position, CUBE_SIZE, withAlpha(getNoteColor(note_color), fade_color.a));
 
                         const cut_direction = rl.Vector3.init(info.cut_normal.x, info.cut_normal.y, 0.0).perpendicular().negate().normalize();
                         rl.drawLine3D(toRaylib(info.cut_point), toRaylib(info.cut_point.add(cut_direction.scale(@min(CUT_VISUAL_LENGTH, (replay_time - event_time) * info.saber_speed)))), fade_color);
 
-                        const flyaway_vector = cut_direction.scale(info.saber_speed / 5.0);
+                        const flyaway_vector = cut_direction.scale(info.saber_speed / 2.0);
                         const point = rl.Vector3.lerp(info.cut_point, info.cut_point.add(flyaway_vector), animation_progress);
                         const scale = @max(0.0, 1.0 - animation_progress);
                         rl.drawSphere(toRaylib(point), 0.1 * scale, score_color);
