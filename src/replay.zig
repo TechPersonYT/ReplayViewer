@@ -1,5 +1,7 @@
 const std = @import("std");
 const rl = @import("raylib");
+const NoteColor = @import("common.zig").NoteColor;
+const CutDirection = @import("common.zig").CutDirection;
 
 const ReplayFileSection = enum(u8) {
     info,
@@ -57,23 +59,10 @@ pub const SaberType = enum(i32) {
     _,
 };
 
-pub const NoteColor = enum(i32) {
-    red,
-    blue,
-
-    _,
-};
-
-pub const CutDirection = enum(i32) {
-    up,
-    down,
-    left,
-    right,
-    up_left,
-    up_right,
-    down_left,
-    down_right,
-    dot,
+pub const ObstacleType = enum(i32) {
+    full_height,
+    crouch,
+    free,
 
     _,
 };
@@ -110,7 +99,7 @@ pub const NoteEvent = struct {
 
 pub const WallEvent = struct {
     line_index: i32,
-    obstacle_type: i32,
+    obstacle_type: ObstacleType,
     width: i32,
     energy: f32,
     time: f32,
@@ -367,7 +356,7 @@ fn takeWallEvent(reader: *std.Io.Reader) !WallEvent {
 
     return .{
         .line_index = line_index,
-        .obstacle_type = obstacle_type,
+        .obstacle_type = @enumFromInt(obstacle_type),
         .width = width,
         .energy = try takeFloat(reader),
         .time = try takeFloat(reader),

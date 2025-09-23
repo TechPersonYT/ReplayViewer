@@ -23,7 +23,7 @@ pub fn webGet(url: []const u8, allocator: std.mem.Allocator) ![]u8 {
     return try response_writer.toOwnedSlice();
 }
 
-pub fn fetchReplayInfoFromID(id: u32, allocator: std.mem.Allocator) !struct { replay_url: []u8, map_url: []u8 } {
+pub fn fetchReplayInfoFromID(id: u32, allocator: std.mem.Allocator) !struct { replay_url: []u8, map_url: []u8, map_filename: []u8 } {
     std.debug.print("Fetching replay info from API\n", .{});
 
     const url = try std.fmt.allocPrint(allocator, "https://api.beatleader.xyz/score/{}", .{id});
@@ -45,7 +45,11 @@ pub fn fetchReplayInfoFromID(id: u32, allocator: std.mem.Allocator) !struct { re
     errdefer allocator.free(owned_map_url);
     @memcpy(owned_map_url, map_url);
 
-    return .{ .replay_url = owned_replay_url, .map_url = owned_map_url };
+    const difficulty_name = json.value.object.get("difficulty").?.object.get("difficultyName").?.string;
+    const mode_name = json.value.object.get("difficulty").?.object.get("modeName").?.string;
+    const map_filename = try std.fmt.allocPrint(allocator, "{s}{s}.dat", .{ difficulty_name, mode_name });
+
+    return .{ .replay_url = owned_replay_url, .map_url = owned_map_url, .map_filename = map_filename };
 }
 
 pub fn downloadReplay(url: []const u8, allocator: std.mem.Allocator) !rp.Replay {
@@ -61,7 +65,7 @@ pub fn downloadReplay(url: []const u8, allocator: std.mem.Allocator) !rp.Replay 
     return rp.parseReplay(&reader, allocator);
 }
 
-pub fn downloadMapAndMusic(url: []const u8, target_filename: []const u8, target_path: []const u8, output_music_filename: []const u8, allocator: std.mem.Allocator) !struct { mp.Map, rl.Music } {
+pub fn downloadMapAndMusic(url: []const u8, target_filename: []const u8, target_path: []const u8, map_filename: []const u8, output_music_filename: []const u8, allocator: std.mem.Allocator) !struct { mp.Map, rl.Music } {
     std.debug.print("Downloading map\n", .{});
 
     const zipped = try webGet(url, allocator);
@@ -86,7 +90,12 @@ pub fn downloadMapAndMusic(url: []const u8, target_filename: []const u8, target_
         try std.zip.extract(directory, &reader, .{});
     }
 
-    const map_data = .{ try mp.parseMapFile(target_path, allocator), try ms.convertAndLoadMusic(target_path, output_music_filename, allocator) };
+    const map_path = try std.fmt.allocPrint(allocator, "{s}/{s}", .{ target_path, map_filename });
+    defer allocator.free(map_path);
+
+    std.debug.print("Map path: '{s}'", .{map_path});
+
+    const map_data = .{ try mp.parseMapFile(map_path, allocator), try ms.convertAndLoadMusic(target_path, output_music_filename, allocator) };
 
     try std.fs.cwd().deleteTree(target_path);
     try std.fs.cwd().deleteFile(target_filename);

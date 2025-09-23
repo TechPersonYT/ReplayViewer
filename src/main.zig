@@ -3,6 +3,7 @@ const rl = @import("raylib");
 const rp = @import("replay.zig");
 const io = @import("io.zig");
 const tweens = @import("tweens.zig");
+const common = @import("common.zig");
 
 const FORWARD: rl.Vector3 = .{ .x = 0.0, .y = 0.0, .z = 1.0 };
 const UP: rl.Vector3 = .{ .x = 0.0, .y = 1.0, .z = 0.0 };
@@ -25,7 +26,7 @@ const SABER_LENGTH: f32 = 1.5;
 
 var REPLAY_TO_RAYLIB: ?rl.Matrix = null;
 
-const DOWNLOADED_MAP_FILENAME: []const u8 = "downloaded_map.bsor";
+const DOWNLOADED_MAP_FILENAME: []const u8 = "downloaded_map.zip";
 const EXTRACTED_MAP_DIRECTORY: []const u8 = "extracted_map";
 const CONVERTED_MUSIC_FILENAME: []const u8 = "converted_music.wav";
 
@@ -201,7 +202,7 @@ fn toRaylib(v: anytype) @TypeOf(v) {
     }
 }
 
-fn getNoteColor(color: rp.NoteColor) rl.Color {
+fn getNoteColor(color: common.NoteColor) rl.Color {
     return switch (color) {
         .red => .red,
         .blue => .blue,
@@ -217,7 +218,7 @@ fn computeNotePosition(line_index: i32, line_layer: i32, z: f32, height: f32) rl
     return .init(line_index_f / 2.0, line_layer_f / 2.0 + height - 1.0, z);
 }
 
-fn computeNoteTransform(note_position: rl.Vector3, note_direction: rp.CutDirection) rl.Matrix {
+fn computeNoteTransform(note_position: rl.Vector3, note_direction: common.CutDirection) rl.Matrix {
     return rl.Matrix.multiply(switch (note_direction) {
         .up => rl.Matrix.identity(),
         .down => rl.Matrix.rotateZ(std.math.pi),
@@ -299,7 +300,7 @@ fn replayTimeRangeToSlice(start_time: f32, end_time: f32, slice: anytype, times:
     }
 }
 
-fn drawNote(note_mesh: *const rl.Mesh, red_note_material: *const rl.Material, red_note_dot_material: *const rl.Material, blue_note_material: *const rl.Material, blue_note_dot_material: *const rl.Material, note_color: rp.NoteColor, note_transform: rl.Matrix, note_direction: rp.CutDirection) void {
+fn drawNote(note_mesh: *const rl.Mesh, red_note_material: *const rl.Material, red_note_dot_material: *const rl.Material, blue_note_material: *const rl.Material, blue_note_dot_material: *const rl.Material, note_color: common.NoteColor, note_transform: rl.Matrix, note_direction: common.CutDirection) void {
     if (note_direction != .dot) {
         switch (note_color) {
             .red => rl.drawMesh(note_mesh.*, red_note_material.*, note_transform),
@@ -357,17 +358,19 @@ pub fn main() !void {
     const replay_web_info = try io.fetchReplayInfoFromID(try inputNumber(), allocator);
     const replay_url = replay_web_info.replay_url;
     const map_url = replay_web_info.map_url;
+    const map_filename = replay_web_info.map_filename;
 
-    std.debug.print("Replay URL: {s}\nMap URL: {s}\n", replay_web_info);
+    std.debug.print("Replay URL: {s}\nMap URL: {s}\nReplay filename: {s}\n", replay_web_info);
     defer allocator.free(replay_url);
     defer allocator.free(map_url);
+    defer allocator.free(map_filename);
 
     var replay = try io.downloadReplay(replay_url, allocator);
     //var replay = try rp.parseReplayFile("replay.bsor", allocator);
     defer replay.deinit(allocator);
 
-    const map, const music = try io.downloadMapAndMusic(map_url, DOWNLOADED_MAP_FILENAME, EXTRACTED_MAP_DIRECTORY, CONVERTED_MUSIC_FILENAME, allocator);
-    _ = map;
+    var map, const music = try io.downloadMapAndMusic(map_url, DOWNLOADED_MAP_FILENAME, EXTRACTED_MAP_DIRECTORY, map_filename, CONVERTED_MUSIC_FILENAME, allocator);
+    defer map.deinit(allocator);
     //const music = try rl.loadMusicStream("song.wav");
 
     std.debug.print("Parsed replay info:\n", .{});
@@ -573,9 +576,9 @@ pub fn main() !void {
             rl.drawGrid(10, 0.5);
         }
 
-//        const y_min: f32 = 0.0;
-//        const y_max: f32 = std.math.pi;
-//        const y_mid: f32 = std.math.pi / 2.0;
+        //        const y_min: f32 = 0.0;
+        //        const y_max: f32 = std.math.pi;
+        //        const y_mid: f32 = std.math.pi / 2.0;
 
         const sample_start_time = replay_time - GRAPH_SAMPLE_LENGTH;
         const sample_end_time = replay_time;
