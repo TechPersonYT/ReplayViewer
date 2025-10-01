@@ -9,7 +9,7 @@ const MapVersion = struct {
 };
 
 pub const Note = struct {
-    time: f32,
+    time: f32 = 0.0,
     line_index: i32 = 0,
     line_layer: i32 = 0,
     color: NoteColor = .blue,
@@ -19,91 +19,143 @@ pub const Note = struct {
 };
 
 pub const Bomb = struct {
-    time: f32,
+    time: f32 = 0.0,
     line_index: i32 = 0,
     line_layer: i32 = 0,
     rotation_lane: ?i32 = null,
 };
 
-fn isBomb(value: std.json.ObjectMap) bool {
-    return @as(NoteColor, @enumFromInt(value.get("_type").?.integer)) == .legacy_bomb;
+fn parseNote(version: MapVersion, note: std.json.ObjectMap) !Note {
+    const time_field, const line_index_field, const line_layer_field, const color_field, const direction_field, const angle_field, const rotation_field = switch (version.major) {
+        2 => .{ "_time", "_lineIndex", "_lineLayer", "_type", "_cutDirection", "_", "_" },
+        3, 4 => .{ "b", "x", "y", "c", "d", "a", "r" },
+
+        else => return error.UnknownMajorVersion,
+    };
+
+    return .{
+        .time = getJsonNumber(f32, note, time_field) orelse 0.0,
+        .line_index = getJsonNumber(i32, note, line_index_field) orelse 0,
+        .line_layer = getJsonNumber(i32, note, line_layer_field) orelse 0,
+        .color = getJsonEnum(NoteColor, note, color_field) orelse .blue,
+        .cut_direction = getJsonEnum(CutDirection, note, direction_field) orelse .dot,
+        .angle_offset = getJsonNumber(i32, note, angle_field),
+        .rotation_lane = getJsonNumber(i32, note, rotation_field),
+    };
 }
 
-fn jsonToFloat(value: std.json.Value) f32 {
-    return switch (value) {
-        .integer => |v| @floatFromInt(v),
-        .float => |v| @floatCast(v),
-        else => @panic("Not a float or integer"),
+fn parseBomb(version: MapVersion, note: std.json.ObjectMap) !Bomb {
+    const time_field, const line_index_field, const line_layer_field, const rotation_field = switch (version.major) {
+        2 => .{ "_time", "_lineIndex", "_lineLayer", "_" },
+        3, 4 => .{ "b", "x", "y", "r" },
+
+        else => return error.UnknownMajorVersion,
     };
+
+    return .{
+        .time = getJsonNumber(f32, note, time_field) orelse 0.0,
+        .line_index = getJsonNumber(i32, note, line_index_field) orelse 0,
+        .line_layer = getJsonNumber(i32, note, line_layer_field) orelse 0,
+        .rotation_lane = getJsonNumber(i32, note, rotation_field),
+    };
+}
+
+fn mergeNoteData(partial: Note, data: Note) Note {
+    var result = data;
+
+    result.time = partial.time;
+    result.rotation_lane = partial.rotation_lane;
+
+    return result;
+}
+
+fn mergeBombData(partial: Bomb, data: Bomb) Bomb {
+    var result = data;
+
+    result.time = partial.time;
+    result.rotation_lane = partial.rotation_lane;
+
+    return result;
+}
+
+fn isBombNote(value: std.json.ObjectMap) bool {
+    if (value.get("_type")) |note_type| {
+        switch (note_type) {
+            .integer => |i| return @as(NoteColor, @enumFromInt(i)) == .legacy_bomb,
+            else => return false,
+        }
+    } else return false;
+}
+
+fn getJsonArrayOrEmpty(map: std.json.ObjectMap, key: []const u8) []std.json.Value {
+    if (map.get(key)) |value| {
+        switch (value) {
+            .array => |a| return a.items,
+            else => {},
+        }
+    }
+
+    return &.{};
+}
+
+fn getJsonNumber(T: type, map: std.json.ObjectMap, key: []const u8) ?T {
+    return if (map.get(key)) |value| {
+        return switch (value) {
+            .integer => |number| std.math.lossyCast(T, number),
+            .float => |number| std.math.lossyCast(T, number),
+            else => null,
+        };
+    } else null;
+}
+
+fn getJsonEnum(T: type, map: std.json.ObjectMap, key: []const u8) ?T {
+    return if (map.get(key)) |value| {
+        return switch (value) {
+            .integer => |number| @enumFromInt(number),
+            else => null,
+        };
+    } else null;
 }
 
 fn parseNotes(root: std.json.ObjectMap, version: MapVersion, allocator: std.mem.Allocator) !std.MultiArrayList(Note) {
     var notes: std.MultiArrayList(Note) = .{};
 
-    switch (version.major) {
-        2 => {
-            for (root.get("_notes").?.array.items) |note| {
-                const n = note.object;
+    const notes_field, const data_field = switch (version.major) {
+        2 => .{ "_notes", null },
+        3 => .{ "colorNotes", null },
+        4 => .{ "colorNotes", "colorNotesData" },
 
-                if (isBomb(n)) continue;
-
-                try notes.append(allocator, .{
-                    .time = jsonToFloat(n.get("_time").?),
-                    .line_index = @intCast(n.get("_lineIndex").?.integer),
-                    .line_layer = @intCast(n.get("_lineLayer").?.integer),
-                    .color = @enumFromInt(n.get("_type").?.integer),
-                    .cut_direction = @enumFromInt(n.get("_cutDirection").?.integer),
-                });
-            }
-        },
-        3 => {
-            for (root.get("colorNotes").?.array.items) |note| {
-                const n = note.object;
-
-                try notes.append(allocator, .{
-                    .time = jsonToFloat(n.get("b").?),
-                    .line_index = @intCast(n.get("x").?.integer),
-                    .line_layer = @intCast(n.get("y").?.integer),
-                    .color = @enumFromInt(n.get("c").?.integer),
-                    .cut_direction = @enumFromInt(n.get("d").?.integer),
-                    .angle_offset = @intCast(n.get("a").?.integer),
-                });
-            }
-        },
-        4 => {
-            // Get index data first
-            var notes_data: std.MultiArrayList(Note) = .{};
-            defer notes_data.deinit(allocator);
-
-            for (root.get("colorNotesData").?.array.items) |data| {
-                const d = data.object;
-
-                try notes_data.append(allocator, .{
-                    .time = undefined,
-                    .line_index = @intCast(d.get("x").?.integer),
-                    .line_layer = @intCast(d.get("y").?.integer),
-                    .color = @enumFromInt(d.get("c").?.integer),
-                    .cut_direction = @enumFromInt(d.get("d").?.integer),
-                    .angle_offset = @intCast(d.get("a").?.integer),
-                });
-            }
-
-            for (root.get("colorNotes").?.array.items) |note| {
-                const n = note.object;
-                const d = notes_data.get(@intCast(n.get("i").?.integer));
-
-                try notes.append(allocator, .{
-                    .time = jsonToFloat(n.get("b").?),
-                    .line_index = d.line_index,
-                    .line_layer = d.line_layer,
-                    .color = d.color,
-                    .cut_direction = d.cut_direction,
-                    .angle_offset = d.angle_offset,
-                    .rotation_lane = @intCast(n.get("r").?.integer),
-                });
-            }
-        },
         else => return error.UnknownMajorVersion,
+    };
+
+    var notes_data: std.MultiArrayList(Note) = .{};
+    defer notes_data.deinit(allocator);
+
+    if (data_field) |field| {
+        for (getJsonArrayOrEmpty(root, field)) |data| {
+            switch (data) {
+                .object => |d| try notes_data.append(allocator, try parseNote(version, d)),
+                else => return error.InvalidJsonTypeForNote,
+            }
+        }
+    }
+
+    for (getJsonArrayOrEmpty(root, notes_field)) |note| {
+        switch (note) {
+            .object => |n| {
+                if (isBombNote(n)) continue;
+
+                const parsed = try parseNote(version, n);
+
+                if (data_field) |_| {
+                    const data = notes_data.get(getJsonNumber(usize, n, "i") orelse return error.NoIndexField);
+                    try notes.append(allocator, mergeNoteData(parsed, data));
+                } else {
+                    try notes.append(allocator, parsed);
+                }
+            },
+            else => return error.InvalidJsonTypeForNote,
+        }
     }
 
     return notes;
@@ -112,59 +164,42 @@ fn parseNotes(root: std.json.ObjectMap, version: MapVersion, allocator: std.mem.
 fn parseBombs(root: std.json.ObjectMap, version: MapVersion, allocator: std.mem.Allocator) !std.MultiArrayList(Bomb) {
     var bombs: std.MultiArrayList(Bomb) = .{};
 
-    switch (version.major) {
-        2 => {
-            for (root.get("_notes").?.array.items) |bomb| {
-                const b = bomb.object;
+    const bombs_field, const data_field = switch (version.major) {
+        2 => .{ "_bombs", null },
+        3 => .{ "bombNotes", null },
+        4 => .{ "bombNotes", "bombNotesData" },
 
-                if (isBomb(b)) {
-                    try bombs.append(allocator, .{
-                        .time = jsonToFloat(b.get("_time").?),
-                        .line_index = @intCast(b.get("_lineIndex").?.integer),
-                        .line_layer = @intCast(b.get("_lineLayer").?.integer),
-                    });
-                }
-            }
-        },
-        3 => {
-            for (root.get("bombNotes").?.array.items) |bomb| {
-                const b = bomb.object;
-
-                try bombs.append(allocator, .{
-                    .time = jsonToFloat(b.get("b").?),
-                    .line_index = @intCast(b.get("x").?.integer),
-                    .line_layer = @intCast(b.get("y").?.integer),
-                });
-            }
-        },
-        4 => {
-            // Get index data first
-            var bombs_data: std.MultiArrayList(Bomb) = .{};
-            defer bombs_data.deinit(allocator);
-
-            for (root.get("bombNotesData").?.array.items) |data| {
-                const d = data.object;
-
-                try bombs_data.append(allocator, .{
-                    .time = undefined,
-                    .line_index = @intCast(d.get("x").?.integer),
-                    .line_layer = @intCast(d.get("y").?.integer),
-                });
-            }
-
-            for (root.get("bombNotes").?.array.items) |bomb| {
-                const b = bomb.object;
-                const d = bombs_data.get(@intCast(b.get("i").?.integer));
-
-                try bombs.append(allocator, .{
-                    .time = @floatFromInt(b.get("b").?.integer),
-                    .line_index = d.line_index,
-                    .line_layer = d.line_layer,
-                    .rotation_lane = @intCast(b.get("r").?.integer),
-                });
-            }
-        },
         else => return error.UnknownMajorVersion,
+    };
+
+    var bombs_data: std.MultiArrayList(Bomb) = .{};
+    defer bombs_data.deinit(allocator);
+
+    if (data_field) |field| {
+        for (getJsonArrayOrEmpty(root, field)) |data| {
+            switch (data) {
+                .object => |d| try bombs_data.append(allocator, try parseBomb(version, d)),
+                else => return error.InvalidJsonTypeForBomb,
+            }
+        }
+    }
+
+    for (getJsonArrayOrEmpty(root, bombs_field)) |bomb| {
+        switch (bomb) {
+            .object => |b| {
+                if (version.major == 2 and !isBombNote(b)) continue;
+
+                const parsed = try parseBomb(version, b);
+
+                if (data_field) |_| {
+                    const data = bombs_data.get(getJsonNumber(usize, b, "i") orelse return error.NoIndexField);
+                    try bombs.append(allocator, mergeBombData(parsed, data));
+                } else {
+                    try bombs.append(allocator, parsed);
+                }
+            },
+            else => return error.InvalidJsonTypeForBomb,
+        }
     }
 
     return bombs;
@@ -193,23 +228,27 @@ pub fn parseMapFile(filename: []const u8, allocator: std.mem.Allocator) !Map {
     return parseMap(buffer, allocator);
 }
 
-pub fn parseMapVersion(root: std.json.ObjectMap) MapVersion {
-    const string = (root.get("_version") orelse root.get("version").?).string;
+pub fn parseMapVersion(root: std.json.ObjectMap) ?MapVersion {
+    const version = root.get("_version") orelse root.get("version") orelse return null;
 
-    const major = string[0] - '0';
-    const minor = string[2] - '0';
-    const revision = string[4] - '0';
+    switch (version) {
+        .string => |s| {
+            const major = s[0] - '0';
+            const minor = s[2] - '0';
+            const revision = s[4] - '0';
 
-    return .{ .major = major, .minor = minor, .revision = revision };
+            return .{ .major = major, .minor = minor, .revision = revision };
+        },
+        else => return null,
+    }
 }
 
 pub fn parseMap(data: []const u8, allocator: std.mem.Allocator) !Map {
-    std.debug.print("{s}\n", .{data});
     const json = try std.json.parseFromSlice(std.json.Value, allocator, data[0 .. data.len - 1], .{});
     defer json.deinit();
 
     const root = json.value.object;
-    const version = parseMapVersion(root);
+    const version = parseMapVersion(root) orelse return error.NoMapVersionFound;
 
     return .{ .notes = try parseNotes(root, version, allocator), .bombs = try parseBombs(root, version, allocator) };
 }
