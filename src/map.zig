@@ -1,8 +1,9 @@
 const std = @import("std");
+const log = std.log.scoped(.map);
 const NoteColor = @import("common.zig").NoteColor;
 const CutDirection = @import("common.zig").CutDirection;
 
-const MapVersion = struct {
+const Version = struct {
     major: u8,
     minor: u8,
     revision: u8,
@@ -25,7 +26,7 @@ pub const Bomb = struct {
     rotation_lane: ?i32 = null,
 };
 
-fn parseNote(version: MapVersion, note: std.json.ObjectMap) !Note {
+fn parseNote(version: Version, note: std.json.ObjectMap) !Note {
     const time_field, const line_index_field, const line_layer_field, const color_field, const direction_field, const angle_field, const rotation_field = switch (version.major) {
         2 => .{ "_time", "_lineIndex", "_lineLayer", "_type", "_cutDirection", "_", "_" },
         3, 4 => .{ "b", "x", "y", "c", "d", "a", "r" },
@@ -44,7 +45,7 @@ fn parseNote(version: MapVersion, note: std.json.ObjectMap) !Note {
     };
 }
 
-fn parseBomb(version: MapVersion, note: std.json.ObjectMap) !Bomb {
+fn parseBomb(version: Version, note: std.json.ObjectMap) !Bomb {
     const time_field, const line_index_field, const line_layer_field, const rotation_field = switch (version.major) {
         2 => .{ "_time", "_lineIndex", "_lineLayer", "_" },
         3, 4 => .{ "b", "x", "y", "r" },
@@ -117,7 +118,9 @@ fn getJsonEnum(T: type, map: std.json.ObjectMap, key: []const u8) ?T {
     } else null;
 }
 
-fn parseNotes(root: std.json.ObjectMap, version: MapVersion, allocator: std.mem.Allocator) !std.MultiArrayList(Note) {
+fn parseNotes(root: std.json.ObjectMap, version: Version, allocator: std.mem.Allocator) !std.MultiArrayList(Note) {
+    log.debug("Parsing map notes", .{});
+
     var notes: std.MultiArrayList(Note) = .{};
 
     const notes_field, const data_field = switch (version.major) {
@@ -158,10 +161,14 @@ fn parseNotes(root: std.json.ObjectMap, version: MapVersion, allocator: std.mem.
         }
     }
 
+    log.debug("Parsed {} notes", .{notes.len});
+
     return notes;
 }
 
-fn parseBombs(root: std.json.ObjectMap, version: MapVersion, allocator: std.mem.Allocator) !std.MultiArrayList(Bomb) {
+fn parseBombs(root: std.json.ObjectMap, version: Version, allocator: std.mem.Allocator) !std.MultiArrayList(Bomb) {
+    log.debug("Parsing map bombs", .{});
+
     var bombs: std.MultiArrayList(Bomb) = .{};
 
     const bombs_field, const data_field = switch (version.major) {
@@ -202,6 +209,8 @@ fn parseBombs(root: std.json.ObjectMap, version: MapVersion, allocator: std.mem.
         }
     }
 
+    log.debug("Parsed {} bombs", .{bombs.len});
+
     return bombs;
 }
 
@@ -210,13 +219,14 @@ pub const Map = struct {
     bombs: std.MultiArrayList(Bomb),
 
     pub fn deinit(self: *Map, allocator: std.mem.Allocator) void {
+        log.debug("Map.deinit()", .{});
         self.notes.deinit(allocator);
         self.bombs.deinit(allocator);
     }
 };
 
-pub fn parseMapFile(filename: []const u8, allocator: std.mem.Allocator) !Map {
-    std.debug.print("Loading map\n", .{});
+pub fn parseFile(filename: []const u8, allocator: std.mem.Allocator) !Map {
+    log.debug("Parsing map file '{s}'", .{filename});
 
     const file = try std.fs.cwd().openFile(filename, .{});
 
@@ -225,10 +235,12 @@ pub fn parseMapFile(filename: []const u8, allocator: std.mem.Allocator) !Map {
 
     _ = try file.readAll(buffer);
 
-    return parseMap(buffer, allocator);
+    return parse(buffer, allocator);
 }
 
-pub fn parseMapVersion(root: std.json.ObjectMap) ?MapVersion {
+pub fn parseVersion(root: std.json.ObjectMap) ?Version {
+    log.debug("Parsing map version", .{});
+
     const version = root.get("_version") orelse root.get("version") orelse return null;
 
     switch (version) {
@@ -243,12 +255,13 @@ pub fn parseMapVersion(root: std.json.ObjectMap) ?MapVersion {
     }
 }
 
-pub fn parseMap(data: []const u8, allocator: std.mem.Allocator) !Map {
+pub fn parse(data: []const u8, allocator: std.mem.Allocator) !Map {
+    log.debug("Parsing map ({} bytes)", .{data.len});
     const json = try std.json.parseFromSlice(std.json.Value, allocator, data[0 .. data.len - 1], .{});
     defer json.deinit();
 
     const root = json.value.object;
-    const version = parseMapVersion(root) orelse return error.NoMapVersionFound;
+    const version = parseVersion(root) orelse return error.NoVersionFound;
 
     return .{ .notes = try parseNotes(root, version, allocator), .bombs = try parseBombs(root, version, allocator) };
 }

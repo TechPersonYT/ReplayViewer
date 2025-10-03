@@ -360,7 +360,6 @@ pub fn main() !void {
     const map_url = replay_web_info.map_url;
     const map_filename = replay_web_info.map_filename;
 
-    std.debug.print("Replay URL: {s}\nMap URL: {s}\nReplay filename: {s}\n", replay_web_info);
     defer allocator.free(replay_url);
     defer allocator.free(map_url);
     defer allocator.free(map_filename);
@@ -373,7 +372,6 @@ pub fn main() !void {
     defer map.deinit(allocator);
     //const music = try rl.loadMusicStream("song.wav");
 
-    std.debug.print("Parsed replay info:\n", .{});
     replay.dump_info();
 
     // Keep track of current frame
@@ -527,6 +525,9 @@ pub fn main() !void {
             const cut_directions = replayTimeRangeToSlice(view_start_time, view_end_time, replay.notes.items(.cut_direction), all_event_times);
             const cut_infos = replayTimeRangeToSlice(view_start_time, view_end_time, replay.notes.items(.cut_info), all_event_times);
             const note_colors = replayTimeRangeToSlice(view_start_time, view_end_time, replay.notes.items(.color), all_event_times);
+//            const bomb_spawn_times = replayTimeRangeToSlice(view_start_time, view_end_time, map.bombs.items(.time), map.bombs.items(.time));
+//            const bomb_line_indices = replayTimeRangeToSlice(view_start_time, view_end_time, map.bombs.items(.line_index), map.bombs.items(.time));
+//            const bomb_line_layers = replayTimeRangeToSlice(view_start_time, view_end_time, map.bombs.items(.line_layer), map.bombs.items(.time));
 
             for (event_times, spawn_times, line_indices, line_layers, cut_directions, cut_infos, note_colors) |event_time, spawn_time, line_index, line_layer, note_direction, cut_info, note_color| {
                 const z_time = computeTimedNoteZ(replay_time, spawn_time, replay.jump_distance);

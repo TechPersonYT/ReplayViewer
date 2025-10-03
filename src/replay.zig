@@ -1,9 +1,10 @@
 const std = @import("std");
+const log = std.log.scoped(.replay);
 const rl = @import("raylib");
 const NoteColor = @import("common.zig").NoteColor;
 const CutDirection = @import("common.zig").CutDirection;
 
-const ReplayFileSection = enum(u8) {
+const FileSection = enum(u8) {
     info,
     frames,
     notes,
@@ -16,7 +17,7 @@ const ReplayFileSection = enum(u8) {
     _,
 };
 
-pub const ReplayFrame = struct {
+pub const Frame = struct {
     time: f32,
     fps: i32,
 
@@ -157,7 +158,7 @@ pub const Replay = struct {
     fail_time: f32,
     practice_speed: f32,
 
-    frames: std.MultiArrayList(ReplayFrame),
+    frames: std.MultiArrayList(Frame),
     notes: std.MultiArrayList(NoteEvent),
     walls: std.MultiArrayList(WallEvent),
     heights: std.MultiArrayList(HeightChangeEvent),
@@ -192,6 +193,8 @@ pub const Replay = struct {
     }
 
     pub fn deinit(self: *Replay, allocator: std.mem.Allocator) void {
+        log.debug("Replay.deinit()", .{});
+
         allocator.free(self.mod_version);
         allocator.free(self.game_version);
         allocator.free(self.timestamp);
@@ -222,7 +225,7 @@ pub const Replay = struct {
     }
 };
 
-fn getSection(reader: *std.Io.Reader) !ReplayFileSection {
+fn getSection(reader: *std.Io.Reader) !FileSection {
     return @enumFromInt(try takeByte(reader));
 }
 
@@ -272,7 +275,7 @@ fn takeQuaternion(reader: *std.Io.Reader) !rl.Quaternion {
     };
 }
 
-fn takeFrame(reader: *std.Io.Reader) !ReplayFrame {
+fn takeFrame(reader: *std.Io.Reader) !Frame {
     return .{
         .time = try takeFloat(reader),
         .fps = try takeInt(reader),
@@ -338,7 +341,10 @@ fn takeNoteEvent(reader: *std.Io.Reader) !NoteEvent {
         .event_time = event_time,
         .spawn_time = spawn_time,
         .event_type = event_type,
-        .cut_info = switch (event_type) { .good, .bad => try takeCutInfo(reader), else => null },
+        .cut_info = switch (event_type) {
+            .good, .bad => try takeCutInfo(reader),
+            else => null,
+        },
     };
 }
 
@@ -394,7 +400,9 @@ fn takeOffsets(reader: *std.Io.Reader) !ControllerOffsets {
     };
 }
 
-pub fn parseReplayFile(filename: []const u8, allocator: std.mem.Allocator) !Replay {
+pub fn parseFile(filename: []const u8, allocator: std.mem.Allocator) !Replay {
+    log.debug("Parsing file '{s}'", .{filename});
+
     const file = try std.fs.cwd().openFile(filename, .{});
 
     const buffer = try allocator.alloc(u8, try file.getEndPos() + 1);
@@ -402,10 +410,12 @@ pub fn parseReplayFile(filename: []const u8, allocator: std.mem.Allocator) !Repl
 
     var reader = file.reader(buffer).interface;
 
-    return parseReplay(&reader, allocator);
+    return parse(&reader, allocator);
 }
 
-pub fn parseReplay(reader: *std.Io.Reader, allocator: std.mem.Allocator) !Replay {
+pub fn parse(reader: *std.Io.Reader, allocator: std.mem.Allocator) !Replay {
+    log.debug("Parsing\n", .{});
+
     var replay: Replay = undefined;
     replay.offsets = null;
     replay.user_data = null;
@@ -469,4 +479,3 @@ pub fn parseReplay(reader: *std.Io.Reader, allocator: std.mem.Allocator) !Replay
 
     return replay;
 }
-
