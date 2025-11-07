@@ -9,43 +9,38 @@ const Version = struct {
     revision: u8,
 };
 
-pub const Note = struct {
+pub const Placement = struct {
     time: f32 = 0.0,
     line_index: i32 = 0,
     line_layer: i32 = 0,
+    rotation_lane: ?i32 = null,
+};
+
+pub const Note = struct {
+    placement: Placement,
     color: NoteColor = .blue,
     cut_direction: CutDirection = .dot,
     angle_offset: ?i32 = null,
-    rotation_lane: ?i32 = null,
 };
 
 pub const Bomb = struct {
-    time: f32 = 0.0,
-    line_index: i32 = 0,
-    line_layer: i32 = 0,
-    rotation_lane: ?i32 = null,
+    placement: Placement,
 };
 
-fn parseNote(version: Version, note: std.json.ObjectMap) !Note {
-    const time_field, const line_index_field, const line_layer_field, const color_field, const direction_field, const angle_field, const rotation_field = switch (version.major) {
-        2 => .{ "_time", "_lineIndex", "_lineLayer", "_type", "_cutDirection", "_", "_" },
-        3, 4 => .{ "b", "x", "y", "c", "d", "a", "r" },
+pub const LegacyWallType = enum {
+    full_height,
+    crouch,
+    free,
+};
 
-        else => return error.UnknownMajorVersion,
-    };
+pub const Wall = struct {
+    placement: Placement,
+    width: i32 = 1,
+    height: i32 = 1,
+    duration: f32 = 1.0,
+};
 
-    return .{
-        .time = getJsonNumber(f32, note, time_field) orelse 0.0,
-        .line_index = getJsonNumber(i32, note, line_index_field) orelse 0,
-        .line_layer = getJsonNumber(i32, note, line_layer_field) orelse 0,
-        .color = getJsonEnum(NoteColor, note, color_field) orelse .blue,
-        .cut_direction = getJsonEnum(CutDirection, note, direction_field) orelse .dot,
-        .angle_offset = getJsonNumber(i32, note, angle_field),
-        .rotation_lane = getJsonNumber(i32, note, rotation_field),
-    };
-}
-
-fn parseBomb(version: Version, note: std.json.ObjectMap) !Bomb {
+fn parsePlacement(version: Version, object: std.json.ObjectMap) !Placement {
     const time_field, const line_index_field, const line_layer_field, const rotation_field = switch (version.major) {
         2 => .{ "_time", "_lineIndex", "_lineLayer", "_" },
         3, 4 => .{ "b", "x", "y", "r" },
@@ -54,18 +49,81 @@ fn parseBomb(version: Version, note: std.json.ObjectMap) !Bomb {
     };
 
     return .{
-        .time = getJsonNumber(f32, note, time_field) orelse 0.0,
-        .line_index = getJsonNumber(i32, note, line_index_field) orelse 0,
-        .line_layer = getJsonNumber(i32, note, line_layer_field) orelse 0,
-        .rotation_lane = getJsonNumber(i32, note, rotation_field),
+        .time = getJsonNumber(f32, object, time_field) orelse 0.0,
+        .line_index = getJsonNumber(i32, object, line_index_field) orelse 0,
+        .line_layer = getJsonNumber(i32, object, line_layer_field) orelse 0,
+        .rotation_lane = getJsonNumber(i32, object, rotation_field),
     };
+}
+
+fn parseNote(version: Version, note: std.json.ObjectMap) !Note {
+    const color_field, const direction_field, const angle_field = switch (version.major) {
+        2 => .{ "_type", "_cutDirection", "_", },
+        3, 4 => .{ "c", "d", "a" },
+
+        else => return error.UnknownMajorVersion,
+    };
+
+    return .{
+        .placement = try parsePlacement(version, note),
+        .color = getJsonEnum(NoteColor, note, color_field) orelse .blue,
+        .cut_direction = getJsonEnum(CutDirection, note, direction_field) orelse .dot,
+        .angle_offset = getJsonNumber(i32, note, angle_field),
+    };
+}
+
+fn parseBomb(version: Version, bomb: std.json.ObjectMap) !Bomb {
+    return .{ .placement = try parsePlacement(version, bomb) };
+}
+
+fn parseWall(version: Version, wall: std.json.ObjectMap) !Wall {
+    switch (version.major) {
+        2 => switch (version.minor) {
+            0...5 => {
+                const time = getJsonNumber(f32, wall, "_time") orelse 0.0;
+                const line_index = getJsonNumber(i32, wall, "_lineIndex") orelse 0;
+
+                const wall_type = getJsonEnum(LegacyWallType, wall, "_type") orelse return error.BadLegacyWallType;
+
+                const line_layer = switch (wall_type) {
+                    .full_height => 0,
+                    .crouch => 2,
+                    .free => getJsonNumber(i32, wall, "_lineLayer") orelse return error.NoWallLineLayer,
+                };
+
+                const width = getJsonNumber(i32, wall, "_width") orelse 1;
+
+                const height = switch (wall_type) {
+                    .full_height => 5,
+                    .crouch => 3,
+                    .free => getJsonNumber(i32, wall, "_height") orelse return error.NoWallHeight,
+                };
+
+                const duration = getJsonNumber(f32, wall, "_duration") orelse 1.0;
+
+                return .{
+                    .placement = .{
+                        .time = time,
+                        .line_index = line_index,
+                        .line_layer = line_layer,
+                    },
+                    .width = width,
+                    .height = height,
+                    .duration = duration,
+                };
+            },
+            6...9 => {},
+
+            else => error.UnknownMinorVersion,
+        }
+    }
 }
 
 fn mergeNoteData(partial: Note, data: Note) Note {
     var result = data;
 
-    result.time = partial.time;
-    result.rotation_lane = partial.rotation_lane;
+    result.placement.time = partial.placement.time;
+    result.placement.rotation_lane = partial.placement.rotation_lane;
 
     return result;
 }
@@ -73,8 +131,8 @@ fn mergeNoteData(partial: Note, data: Note) Note {
 fn mergeBombData(partial: Bomb, data: Bomb) Bomb {
     var result = data;
 
-    result.time = partial.time;
-    result.rotation_lane = partial.rotation_lane;
+    result.placement.time = partial.placement.time;
+    result.placement.rotation_lane = partial.placement.rotation_lane;
 
     return result;
 }
@@ -216,6 +274,7 @@ fn parseBombs(root: std.json.ObjectMap, version: Version, allocator: std.mem.All
     return bombs;
 }
 
+// TODO: Parse walls
 pub const Map = struct {
     notes: std.MultiArrayList(Note),
     bombs: std.MultiArrayList(Bomb),
