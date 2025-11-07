@@ -58,7 +58,11 @@ fn parsePlacement(version: Version, object: std.json.ObjectMap) !Placement {
 
 fn parseNote(version: Version, note: std.json.ObjectMap) !Note {
     const color_field, const direction_field, const angle_field = switch (version.major) {
-        2 => .{ "_type", "_cutDirection", "_", },
+        2 => .{
+            "_type",
+            "_cutDirection",
+            "_",
+        },
         3, 4 => .{ "c", "d", "a" },
 
         else => return error.UnknownMajorVersion,
@@ -115,7 +119,7 @@ fn parseWall(version: Version, wall: std.json.ObjectMap) !Wall {
             6...9 => {},
 
             else => error.UnknownMinorVersion,
-        }
+        },
     }
 }
 
@@ -275,6 +279,50 @@ fn parseBombs(root: std.json.ObjectMap, version: Version, allocator: std.mem.All
 }
 
 // TODO: Parse walls
+
+fn parseJumpSpeeds(root: std.json.ObjectMap, version: Version, allocator: std.mem.Allocator) !std.ArrayList(f32) {
+    var speeds: std.ArrayList(f32) = .empty;
+
+    errdefer speeds.deinit(allocator);
+
+    switch (version.major) {
+        2 => {
+            const sets = getJsonArrayOrEmpty(root, "_difficultyBeatmapSets");
+
+            for (sets) |set| {
+                switch (set) {
+                    .object => |s| {
+                        const maps = getJsonArrayOrEmpty(s, "_difficultyBeatmaps");
+
+                        for (maps) |map| {
+                            switch (map) {
+                                .object => |o| try speeds.append(allocator, getJsonNumber(f32, o, "_noteJumpMovementSpeed") orelse return error.NoV2JumpMovementSpeed),
+                                else => return error.UnexpectedMapType,
+                            }
+                        }
+                    },
+                    else => return error.UnexpectedSetType,
+                }
+            }
+        },
+        4 => {
+            const sets = getJsonArrayOrEmpty(root, "difficultyBeatmaps");
+
+            for (sets) |set| {
+                switch (set) {
+                    .object => |s| {
+                        try speeds.append(allocator, getJsonNumber(f32, s, "noteJumpMovementSpeed") orelse return error.NoV4JumpMovementSpeed);
+                    },
+                    else => return error.UnexpectedSetType,
+                }
+            }
+        },
+        else => return error.InvalidMapInfoVersion,
+    }
+
+    return speeds;
+}
+
 pub const Map = struct {
     notes: std.MultiArrayList(Note),
     bombs: std.MultiArrayList(Bomb),
@@ -283,6 +331,15 @@ pub const Map = struct {
         log.debug("Map.deinit()", .{});
         self.notes.deinit(allocator);
         self.bombs.deinit(allocator);
+    }
+};
+
+pub const MapInfo = struct {
+    jump_speeds: std.ArrayList(f32),
+
+    pub fn deinit(self: *MapInfo, allocator: std.mem.Allocator) void {
+        log.debug("MapInfo.deinit()", .{});
+        self.jump_speeds.deinit(allocator);
     }
 };
 
@@ -297,6 +354,19 @@ pub fn parseFile(filename: []const u8, allocator: std.mem.Allocator) !Map {
     _ = try file.readAll(buffer);
 
     return parse(buffer, allocator);
+}
+
+pub fn parseInfoFile(filename: []const u8, allocator: std.mem.Allocator) !MapInfo {
+    log.debug("Parsing map info file '{s}'", .{filename});
+
+    const file = try std.fs.cwd().openFile(filename, .{});
+
+    const buffer = try allocator.alloc(u8, try file.getEndPos() + 1);
+    defer allocator.free(buffer);
+
+    _ = try file.readAll(buffer);
+
+    return parseInfo(buffer, allocator);
 }
 
 pub fn parseVersion(root: std.json.ObjectMap) ?Version {
@@ -325,4 +395,15 @@ pub fn parse(data: []const u8, allocator: std.mem.Allocator) !Map {
     const version = parseVersion(root) orelse return error.NoVersionFound;
 
     return .{ .notes = try parseNotes(root, version, allocator), .bombs = try parseBombs(root, version, allocator) };
+}
+
+pub fn parseInfo(data: []const u8, allocator: std.mem.Allocator) !MapInfo {
+    log.debug("Parsing map info ({} bytes)", .{data.len});
+    const json = try std.json.parseFromSlice(std.json.Value, allocator, data[0 .. data.len - 1], .{});
+    defer json.deinit();
+
+    const root = json.value.object;
+    const version = parseVersion(root) orelse return error.NoVersionFound;
+
+    return .{ .jump_speeds = try parseJumpSpeeds(root, version, allocator) };
 }
