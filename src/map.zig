@@ -122,6 +122,7 @@ fn parseNotes(root: std.json.ObjectMap, version: Version, allocator: std.mem.All
     log.debug("Parsing map notes", .{});
 
     var notes: std.MultiArrayList(Note) = .{};
+    errdefer notes.deinit(allocator);
 
     const notes_field, const data_field = switch (version.major) {
         2 => .{ "_notes", null },
@@ -170,6 +171,7 @@ fn parseBombs(root: std.json.ObjectMap, version: Version, allocator: std.mem.All
     log.debug("Parsing map bombs", .{});
 
     var bombs: std.MultiArrayList(Bomb) = .{};
+    errdefer bombs.deinit(allocator);
 
     const bombs_field, const data_field = switch (version.major) {
         2 => .{ "_bombs", null },
