@@ -73,7 +73,7 @@ pub fn downloadReplay(url: []const u8, allocator: std.mem.Allocator) !rp.Replay 
     return rp.parse(&reader, allocator);
 }
 
-pub fn downloadMapAndMusic(url: []const u8, target_filename: []const u8, target_path: []const u8, map_filename: []const u8, output_music_filename: []const u8, allocator: std.mem.Allocator) !struct { mp.Map, rl.Music } {
+pub fn downloadMapAndMusic(url: []const u8, target_filename: []const u8, target_path: []const u8, map_filename: []const u8, output_music_filename: []const u8, allocator: std.mem.Allocator) !struct { mp.Map, mp.MapInfo, rl.Music } {
     log.debug("Downloading map", .{});
 
     const zipped = try webGet(url, allocator);
@@ -103,7 +103,10 @@ pub fn downloadMapAndMusic(url: []const u8, target_filename: []const u8, target_
 
     log.debug("Map path: '{s}'", .{map_path});
 
-    const map_data = .{ try mp.parseFile(map_path, allocator), try ms.convertAndLoad(target_path, output_music_filename, allocator) };
+    const map_info_path = try std.fmt.allocPrint(allocator, "{s}/Info.dat", .{ target_path });
+    defer allocator.free(map_info_path);
+
+    const map_data = .{ try mp.parseFile(map_path, allocator), try mp.parseInfoFile(map_info_path, allocator), try ms.convertAndLoad(target_path, output_music_filename, allocator) };
 
     try std.fs.cwd().deleteTree(target_path);
     try std.fs.cwd().deleteFile(target_filename);

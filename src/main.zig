@@ -22,7 +22,10 @@ const CUT_VISUAL_LENGTH: f32 = 0.5;
 const TRAIL_DURATION: f32 = 0.25;
 const TRAIL_ITERATIONS = 120;
 
-const SABER_LENGTH: f32 = 1.5;
+const UNITS_TO_METERS: f32 = 0.6;
+const METERS_TO_UNITS: f32 = 1.0 / UNITS_TO_METERS;
+
+const SABER_LENGTH: f32 = 1.0 * METERS_TO_UNITS;
 
 var REPLAY_TO_RAYLIB: ?rl.Matrix = null;
 
@@ -215,7 +218,7 @@ fn computeNotePosition(line_index: i32, line_layer: i32, z: f32, height: f32) rl
     const line_index_f = 1.5 - @as(f32, @floatFromInt(line_index));
     const line_layer_f: f32 = @floatFromInt(line_layer);
 
-    return .init(line_index_f / 2.0, line_layer_f / 2.0 + height - 1.0, z);
+    return .init(line_index_f * UNITS_TO_METERS, line_layer_f * UNITS_TO_METERS + height - 1.0, z);
 }
 
 fn computeNoteTransform(note_position: rl.Vector3, note_direction: common.CutDirection) rl.Matrix {
@@ -234,8 +237,11 @@ fn computeNoteTransform(note_position: rl.Vector3, note_direction: common.CutDir
     }, rl.Matrix.translate(note_position.x, note_position.y, note_position.z));
 }
 
-fn computeTimedNoteZ(replay_time: f32, spawn_time: f32, jump_distance: f32) f32 {
-    return (spawn_time - @as(f32, @floatCast(replay_time))) * jump_distance;
+fn computeTimedNoteZ(replay_time: f32, spawn_time: f32, jump_distance: f32, jump_speed: f32) f32 {
+    const elapsed = replay_time - spawn_time;
+    _ = jump_distance;
+
+    return (-elapsed * jump_speed) * METERS_TO_UNITS;
 }
 
 fn withAlpha(color: rl.Color, alpha: u8) rl.Color {
@@ -368,8 +374,9 @@ pub fn main() !void {
     //var replay = try rp.parseReplayFile("replay.bsor", allocator);
     defer replay.deinit(allocator);
 
-    var map, const music = try io.downloadMapAndMusic(map_url, DOWNLOADED_MAP_FILENAME, EXTRACTED_MAP_DIRECTORY, map_filename, CONVERTED_MUSIC_FILENAME, allocator);
+    var map, var map_info, const music = try io.downloadMapAndMusic(map_url, DOWNLOADED_MAP_FILENAME, EXTRACTED_MAP_DIRECTORY, map_filename, CONVERTED_MUSIC_FILENAME, allocator);
     defer map.deinit(allocator);
+    defer map_info.deinit(allocator);
     //const music = try rl.loadMusicStream("song.wav");
 
     replay.dump_info();
@@ -529,8 +536,10 @@ pub fn main() !void {
 //            const bomb_line_indices = replayTimeRangeToSlice(view_start_time, view_end_time, map.bombs.items(.line_index), map.bombs.items(.time));
 //            const bomb_line_layers = replayTimeRangeToSlice(view_start_time, view_end_time, map.bombs.items(.line_layer), map.bombs.items(.time));
 
+            const jump_speed = map_info.jump_speeds.items[map_info.jump_speeds.items.len - 1];
+
             for (event_times, spawn_times, line_indices, line_layers, cut_directions, cut_infos, note_colors) |event_time, spawn_time, line_index, line_layer, note_direction, cut_info, note_color| {
-                const z_time = computeTimedNoteZ(replay_time, spawn_time, replay.jump_distance);
+                const z_time = computeTimedNoteZ(replay_time, spawn_time, replay.jump_distance, jump_speed);
 
                 const note_position = computeNotePosition(line_index, line_layer, z_time, actual_height);
                 const note_transform = computeNoteTransform(note_position, note_direction);
@@ -540,7 +549,7 @@ pub fn main() !void {
                 }
 
                 if (cut_info) |info| {
-                    const frozen_note_position: rl.Vector3 = .init(note_position.x, note_position.y, computeTimedNoteZ(event_time, spawn_time, replay.jump_distance));
+                    const frozen_note_position: rl.Vector3 = .init(note_position.x, note_position.y, computeTimedNoteZ(event_time, spawn_time, replay.jump_distance, jump_speed));
                     //const frozen_note_transform = computeNoteTransform(frozen_note_position, note_direction);
 
                     // Postcut animation
