@@ -100,13 +100,29 @@ fn lerpSlice(slice: anytype, index: f32) std.meta.Elem(@TypeOf(slice)) {
     const progress: f32 = 1.0 - (@as(f32, @floatFromInt(b_index)) - index);
 
     switch (Type) {
-        f32, f64 => return rl.lerp(slice[a_index], slice[b_index], progress),
+        f32, f64 => return rl.math.lerp(slice[a_index], slice[b_index], progress),
 
         rl.Vector3 => return slice[a_index].lerp(slice[b_index], progress),
         rl.Quaternion => return slice[a_index].slerp(slice[b_index], progress),
 
-        else => @compileError("lerpSlice not implemented for " ++ @typeName(Type)),
+        else => {
+            //@compileLog("lerpSlice not implemented for " ++ @typeName(Type) ++ ". Will return the first of the two interpolants");
+            return slice[a_index];
+        },
     }
+}
+
+fn lerpSliceMulti(T: type, multi_array_list: std.MultiArrayList(T), index: f32) T {
+    const Container = @TypeOf(multi_array_list);
+    const slice = multi_array_list.slice();
+
+    var result: T = undefined;
+
+    inline for (std.meta.fields(T), 0..) |field, i| {
+        @field(result, field.name) = lerpSlice(slice.items(@as(Container.Field, @enumFromInt(i))), index);
+    }
+
+    return result;
 }
 
 fn drawLineGraph(x: i32, y: i32, width: i32, height: i32, min_y: f32, max_y: f32, mid_y: f32, values: []f32, line_color: rl.Color, border_width: f32, border_color: rl.Color, zero_line: bool, allocator: std.mem.Allocator) !void {
@@ -214,13 +230,6 @@ fn getNoteColor(color: common.NoteColor) rl.Color {
     };
 }
 
-fn computeNotePosition(line_index: i32, line_layer: i32, z: f32, height: f32) rl.Vector3 {
-    const line_index_f = 1.5 - @as(f32, @floatFromInt(line_index));
-    const line_layer_f: f32 = @floatFromInt(line_layer);
-
-    return .init(line_index_f * UNITS_TO_METERS, line_layer_f * UNITS_TO_METERS + height - 1.0, z);
-}
-
 fn computeNoteTransform(note_position: rl.Vector3, note_direction: common.CutDirection) rl.Matrix {
     return rl.Matrix.multiply(switch (note_direction) {
         .up => rl.Matrix.identity(),
@@ -235,6 +244,13 @@ fn computeNoteTransform(note_position: rl.Vector3, note_direction: common.CutDir
 
         else => rl.Matrix.identity(),
     }, rl.Matrix.translate(note_position.x, note_position.y, note_position.z));
+}
+
+fn computeNotePosition(line_index: i32, line_layer: i32, z: f32, height: f32) rl.Vector3 {
+    const line_index_f = 1.5 - @as(f32, @floatFromInt(line_index));
+    const line_layer_f: f32 = @floatFromInt(line_layer);
+
+    return .init(line_index_f * UNITS_TO_METERS, line_layer_f * UNITS_TO_METERS + height - 1.0, z);
 }
 
 fn computeTimedNoteZ(replay_time: f32, spawn_time: f32, jump_distance: f32, jump_speed: f32) f32 {
@@ -260,13 +276,13 @@ fn drawSaberTrail(positions: []rl.Vector3, rotations: []rl.Quaternion, time: f32
     const iterations = TRAIL_ITERATIONS;
     const lookbehind = TRAIL_DURATION / @as(f32, @floatFromInt(iterations));
 
-    var last_frame = lerpFrameIndexToNext(replayTimeToIndex(time, times), time, times);
+    var last_frame = lerpFrameIndexToNext(timeToIndex(time, times), time, times);
     var last_position = lerpSlice(positions, last_frame);
     var last_rotation = lerpSlice(rotations, last_frame);
 
     for (1..iterations) |i| {
         const new_time = time - @as(f32, @floatFromInt(i)) * lookbehind;
-        const frame = lerpFrameIndexToNext(replayTimeToIndex(new_time, times), new_time, times);
+        const frame = lerpFrameIndexToNext(timeToIndex(new_time, times), new_time, times);
         const position = lerpSlice(positions, frame);
         const rotation = lerpSlice(rotations, frame);
 
@@ -286,23 +302,28 @@ fn orderF32(a: f32, b: f32) std.math.Order {
     return std.math.order(a, b);
 }
 
-fn replayTimeToIndex(time: f32, times: []f32) usize {
+fn timeToIndex(time: f32, times: []f32) usize {
     return std.math.sub(usize, std.sort.lowerBound(f32, times, time, orderF32), 1) catch 0;
 }
 
-fn replayTimeRangeToSlice(start_time: f32, end_time: f32, slice: anytype, times: []f32) []std.meta.Elem(@TypeOf(slice)) {
-    const lower = replayTimeToIndex(start_time, times);
+fn timeRangeToSliceRange(start_time: f32, end_time: f32, times: []f32) struct { ?usize, ?usize } {
+    const lower: usize = timeToIndex(start_time, times);
+    if (lower == times.len) return .{ null, null };
 
-    if (lower == slice.len) {
-        return &.{};
-    }
+    var upper: ?usize = timeToIndex(end_time, times[lower..]);
+    if (lower + upper.? == times.len) upper = null;
 
-    const upper = replayTimeToIndex(end_time, times);
+    return .{ lower, upper };
+}
 
-    if (upper == slice.len) {
-        return slice[lower..];
+fn timeSliceMulti(start_time: f32, end_time: f32, multi_slice: anytype) @TypeOf(multi_slice) {
+    const first, const len = timeRangeToSliceRange(start_time, end_time, multi_slice.items(.time));
+
+    if (first) |f| {
+        if (len) |l| return multi_slice.subslice(f, l)
+        else return multi_slice.subslice(f, multi_slice.len - f);
     } else {
-        return slice[lower..upper];
+        return multi_slice.subslice(0, 0);
     }
 }
 
@@ -470,6 +491,9 @@ pub fn main() !void {
             camera.update(.free);
         }
 
+        const replay_frame_slices = replay.frames.slice();
+        const replay_note_slices = replay.notes.slice();
+
         // Draw
         rl.beginDrawing();
         defer rl.endDrawing();
@@ -491,31 +515,25 @@ pub fn main() !void {
 
             // Sync frame with replay time
             // FIXME: If we didn't have a frame for this time, other events we did have might not be interpolated correctly
-            frame_index = replayTimeToIndex(replay_time, replay.frames.items(.time));
+            frame_index = timeToIndex(replay_time, replay.frames.items(.time));
 
             if (frame_index + 2 >= replay.frames.len) {
                 break;
             }
 
             const interpolated_frame_index: f32 = lerpFrameIndexToNext(frame_index, replay_time, replay.frames.items(.time));
-
-            const interpolated_head_position = lerpSlice(replay.frames.items(.head_position), interpolated_frame_index);
-            const interpolated_head_rotation = lerpSlice(replay.frames.items(.head_rotation), interpolated_frame_index);
-            const interpolated_left_hand_position = lerpSlice(replay.frames.items(.left_hand_position), interpolated_frame_index);
-            const interpolated_left_hand_rotation = lerpSlice(replay.frames.items(.left_hand_rotation), interpolated_frame_index);
-            const interpolated_right_hand_position = lerpSlice(replay.frames.items(.right_hand_position), interpolated_frame_index);
-            const interpolated_right_hand_rotation = lerpSlice(replay.frames.items(.right_hand_rotation), interpolated_frame_index);
+            const interpolated_frame = lerpSliceMulti(rp.Frame, replay.frames, interpolated_frame_index);
 
             // Head
-            drawHead(interpolated_head_position, interpolated_head_rotation, &head_mesh, &head_material);
+            drawHead(interpolated_frame.head_position, interpolated_frame.head_rotation, &head_mesh, &head_material);
 
             // Left hand
-            drawSaber(interpolated_left_hand_position, interpolated_left_hand_rotation, &saber_hilt_mesh, &left_saber_hilt_material, &saber_blade_mesh, &left_saber_blade_material);
-            drawSaberTrail(replay.frames.items(.left_hand_position), replay.frames.items(.left_hand_rotation), replay_time, replay.frames.items(.time), .red);
+            drawSaber(interpolated_frame.left_hand_position, interpolated_frame.left_hand_rotation, &saber_hilt_mesh, &left_saber_hilt_material, &saber_blade_mesh, &left_saber_blade_material);
+            drawSaberTrail(replay_frame_slices.items(.left_hand_position), replay_frame_slices.items(.left_hand_rotation), replay_time, replay_frame_slices.items(.time), .red);
 
             // Right hand
-            drawSaber(interpolated_right_hand_position, interpolated_right_hand_rotation, &saber_hilt_mesh, &right_saber_hilt_material, &saber_blade_mesh, &right_saber_blade_material);
-            drawSaberTrail(replay.frames.items(.right_hand_position), replay.frames.items(.right_hand_rotation), replay_time, replay.frames.items(.time), .blue);
+            drawSaber(interpolated_frame.right_hand_position, interpolated_frame.right_hand_rotation, &saber_hilt_mesh, &right_saber_hilt_material, &saber_blade_mesh, &right_saber_blade_material);
+            drawSaberTrail(replay_frame_slices.items(.right_hand_position), replay_frame_slices.items(.right_hand_rotation), replay_time, replay_frame_slices.items(.time), .blue);
 
             // Note events
             const lookahead = 2.0;
@@ -524,21 +542,24 @@ pub fn main() !void {
             const view_end_time: f32 = replay_time + lookahead;
             const actual_height = if (replay.height <= 0.05) replay.heights.items(.height)[0] else replay.height;
 
-            const all_event_times = replay.notes.items(.event_time);
-            const event_times = replayTimeRangeToSlice(view_start_time, view_end_time, all_event_times, all_event_times);
-            const spawn_times = replayTimeRangeToSlice(view_start_time, view_end_time, replay.notes.items(.spawn_time), all_event_times);
-            const line_indices = replayTimeRangeToSlice(view_start_time, view_end_time, replay.notes.items(.line_index), all_event_times);
-            const line_layers = replayTimeRangeToSlice(view_start_time, view_end_time, replay.notes.items(.line_layer), all_event_times);
-            const cut_directions = replayTimeRangeToSlice(view_start_time, view_end_time, replay.notes.items(.cut_direction), all_event_times);
-            const cut_infos = replayTimeRangeToSlice(view_start_time, view_end_time, replay.notes.items(.cut_info), all_event_times);
-            const note_colors = replayTimeRangeToSlice(view_start_time, view_end_time, replay.notes.items(.color), all_event_times);
-//            const bomb_spawn_times = replayTimeRangeToSlice(view_start_time, view_end_time, map.bombs.items(.time), map.bombs.items(.time));
-//            const bomb_line_indices = replayTimeRangeToSlice(view_start_time, view_end_time, map.bombs.items(.line_index), map.bombs.items(.time));
-//            const bomb_line_layers = replayTimeRangeToSlice(view_start_time, view_end_time, map.bombs.items(.line_layer), map.bombs.items(.time));
+            const replay_notes = timeSliceMulti(view_start_time, view_end_time, replay_note_slices);
+            //const replay_bombs = timeSliceMulti(view_start_time, view_end_time, replay_bomb_slices);
 
             const jump_speed = map_info.jump_speeds.items[map_info.jump_speeds.items.len - 1];
 
-            for (event_times, spawn_times, line_indices, line_layers, cut_directions, cut_infos, note_colors) |event_time, spawn_time, line_index, line_layer, note_direction, cut_info, note_color| {
+            for (replay_notes.items(.time),
+                 replay_notes.items(.spawn_time),
+                 replay_notes.items(.line_index),
+                 replay_notes.items(.line_layer),
+                 replay_notes.items(.cut_direction),
+                 replay_notes.items(.cut_info),
+                 replay_notes.items(.color)) |event_time,
+                                              spawn_time,
+                                              line_index,
+                                              line_layer,
+                                              note_direction,
+                                              cut_info,
+                                              note_color| {
                 const z_time = computeTimedNoteZ(replay_time, spawn_time, replay.jump_distance, jump_speed);
 
                 const note_position = computeNotePosition(line_index, line_layer, z_time, actual_height);
@@ -550,7 +571,6 @@ pub fn main() !void {
 
                 if (cut_info) |info| {
                     const frozen_note_position: rl.Vector3 = .init(note_position.x, note_position.y, computeTimedNoteZ(event_time, spawn_time, replay.jump_distance, jump_speed));
-                    //const frozen_note_transform = computeNoteTransform(frozen_note_position, note_direction);
 
                     // Postcut animation
                     if (replay_time > event_time) {
@@ -586,32 +606,11 @@ pub fn main() !void {
             rl.drawGrid(10, 0.5);
         }
 
-        //        const y_min: f32 = 0.0;
-        //        const y_max: f32 = std.math.pi;
-        //        const y_mid: f32 = std.math.pi / 2.0;
-
         const sample_start_time = replay_time - GRAPH_SAMPLE_LENGTH;
         const sample_end_time = replay_time;
 
-        //const sampled_times = replayTimeRangeToSlice(sample_start_time, sample_end_time, replay.frames.items(.time), replay.frames.items(.time));
-        const sampled_left_hand_rotations = replayTimeRangeToSlice(sample_start_time, sample_end_time, replay.frames.items(.left_hand_rotation), replay.frames.items(.time));
-        const sampled_right_hand_rotations = replayTimeRangeToSlice(sample_start_time, sample_end_time, replay.frames.items(.right_hand_rotation), replay.frames.items(.time));
-
-        const sampled_cut_times = replayTimeRangeToSlice(sample_start_time, sample_end_time, replay.notes.items(.event_time), replay.notes.items(.event_time));
-        const sampled_cut_infos = replayTimeRangeToSlice(sample_start_time, sample_end_time, replay.notes.items(.cut_info), replay.notes.items(.event_time));
-        const sampled_note_colors = replayTimeRangeToSlice(sample_start_time, sample_end_time, replay.notes.items(.color), replay.notes.items(.event_time));
-
-        // Plot left hand motion
-        var left_hand_swing_twists: std.MultiArrayList(SwingTwistDecomposition) = .{};
-        defer left_hand_swing_twists.deinit(allocator);
-        try computeSwingTwistDecomps(&left_hand_swing_twists, sampled_left_hand_rotations, allocator);
-        //try drawLineGraph(GRAPH_X, GRAPH_Y, GRAPH_WIDTH, GRAPH_HEIGHT, y_min, y_max, y_mid, &left_hand_angles, .red, 2, .white, true, allocator);
-
-        // Plot right hand motion
-        var right_hand_swing_twists: std.MultiArrayList(SwingTwistDecomposition) = .{};
-        defer right_hand_swing_twists.deinit(allocator);
-        try computeSwingTwistDecomps(&right_hand_swing_twists, sampled_right_hand_rotations, allocator);
-        //try drawLineGraph(GRAPH_X, GRAPH_Y, GRAPH_WIDTH, GRAPH_HEIGHT, y_min, y_max, y_mid, &right_hand_angles, .blue, 2, .white, false, allocator);
+        //const sampled_frames = timeSliceMulti(sample_start_time, sample_end_time);
+        const sampled_notes = timeSliceMulti(sample_start_time, sample_end_time, replay_note_slices);
 
         // Cut scores
         var cut_scores_left: std.ArrayList(f32) = .{};
@@ -623,7 +622,9 @@ pub fn main() !void {
         var score_times: std.ArrayList(f32) = .{};
         defer score_times.deinit(allocator);
 
-        for (sampled_cut_times, sampled_cut_infos, sampled_note_colors) |time, cut_info, color| {
+        for (sampled_notes.items(.time),
+             sampled_notes.items(.cut_info),
+             sampled_notes.items(.color)) |time, cut_info, color| {
             if (cut_info) |cut| {
                 switch (color) {
                     .red => try cut_scores_left.append(allocator, @floatFromInt(computeCutScore(cut))),

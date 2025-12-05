@@ -92,7 +92,7 @@ pub const NoteEvent = struct {
     line_layer: i32,
     color: NoteColor,
     cut_direction: CutDirection,
-    event_time: f32,
+    time: f32,
     spawn_time: f32,
     event_type: EventType,
     cut_info: ?CutInfo,
@@ -338,7 +338,7 @@ fn takeNoteEvent(reader: *std.Io.Reader) !NoteEvent {
         .line_layer = line_layer,
         .color = @enumFromInt(color),
         .cut_direction = @enumFromInt(direction),
-        .event_time = event_time,
+        .time = event_time,
         .spawn_time = spawn_time,
         .event_type = event_type,
         .cut_info = switch (event_type) {
