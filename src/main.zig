@@ -412,19 +412,19 @@ pub fn main() !void {
     const note_mesh = rl.genMeshCube(CUBE_SIDE_LENGTH, CUBE_SIDE_LENGTH, CUBE_SIDE_LENGTH);
 
     // Textures
-    const head_texture = try rl.loadTexture("head.png");
+    const head_texture = try rl.loadTexture("assets/head.png");
 
-    const left_saber_hilt_texture = try rl.loadTexture("left_saber_hilt.png");
-    const right_saber_hilt_texture = try rl.loadTexture("right_saber_hilt.png");
+    const left_saber_hilt_texture = try rl.loadTexture("assets/left_saber_hilt.png");
+    const right_saber_hilt_texture = try rl.loadTexture("assets/right_saber_hilt.png");
 
-    const left_saber_blade_texture = try rl.loadTexture("left_saber.png");
-    const right_saber_blade_texture = try rl.loadTexture("right_saber.png");
+    const left_saber_blade_texture = try rl.loadTexture("assets/left_saber.png");
+    const right_saber_blade_texture = try rl.loadTexture("assets/right_saber.png");
 
-    const red_note_texture = try rl.loadTexture("red_note.png");
-    const blue_note_texture = try rl.loadTexture("blue_note.png");
+    const red_note_texture = try rl.loadTexture("assets/red_note.png");
+    const blue_note_texture = try rl.loadTexture("assets/blue_note.png");
 
-    const red_note_dot_texture = try rl.loadTexture("red_note_dot.png");
-    const blue_note_dot_texture = try rl.loadTexture("blue_note_dot.png");
+    const red_note_dot_texture = try rl.loadTexture("assets/red_note_dot.png");
+    const blue_note_dot_texture = try rl.loadTexture("assets/blue_note_dot.png");
 
     rl.setTextureWrap(red_note_texture, .clamp);
     rl.setTextureWrap(blue_note_texture, .clamp);

@@ -428,38 +428,35 @@ pub fn parse(reader: *std.Io.Reader, allocator: std.mem.Allocator) !Replay {
         return error.InvalidSectionStartByte;
     }
 
-    replay.mod_version     =     try takeString(reader, allocator);
-    replay.game_version    =     try takeString(reader, allocator);
-    replay.timestamp       =     try takeString(reader, allocator);
-    replay.player_id       =     try takeString(reader, allocator);
-    replay.player_name     =     try takeString(reader, allocator);
-    replay.platform        =     try takeString(reader, allocator);
-    replay.tracking_system =     try takeString(reader, allocator);
-    replay.hmd             =     try takeString(reader, allocator);
-    replay.controller      =     try takeString(reader, allocator);
-    replay.map_hash        =     try takeString(reader, allocator);
-    replay.song_name       =     try takeString(reader, allocator);
-    replay.mapper_name     =     try takeString(reader, allocator);
-    replay.difficulty_name =     try takeString(reader, allocator);
+    replay.mod_version = try takeString(reader, allocator);
+    replay.game_version = try takeString(reader, allocator);
+    replay.timestamp = try takeString(reader, allocator);
+    replay.player_id = try takeString(reader, allocator);
+    replay.player_name = try takeString(reader, allocator);
+    replay.platform = try takeString(reader, allocator);
+    replay.tracking_system = try takeString(reader, allocator);
+    replay.hmd = try takeString(reader, allocator);
+    replay.controller = try takeString(reader, allocator);
+    replay.map_hash = try takeString(reader, allocator);
+    replay.song_name = try takeString(reader, allocator);
+    replay.mapper_name = try takeString(reader, allocator);
+    replay.difficulty_name = try takeString(reader, allocator);
 
-    replay.score           =     try takeInt(reader);
+    replay.score = try takeInt(reader);
 
-    replay.game_mode       =     try takeString(reader, allocator);
-    replay.environment     =     try takeString(reader, allocator);
-    replay.modifiers       =     try takeString(reader, allocator);
+    replay.game_mode = try takeString(reader, allocator);
+    replay.environment = try takeString(reader, allocator);
+    replay.modifiers = try takeString(reader, allocator);
 
-    replay.jump_distance =       try takeFloat(reader);
-    replay.left_handed =         try takeBool(reader);
-    replay.height =              try takeFloat(reader);
+    replay.jump_distance = try takeFloat(reader);
+    replay.left_handed = try takeBool(reader);
+    replay.height = try takeFloat(reader);
 
     replay.practice_start_time = try takeFloat(reader);
-    replay.fail_time =           try takeFloat(reader);
-    replay.practice_speed =      try takeFloat(reader);
+    replay.fail_time = try takeFloat(reader);
+    replay.practice_speed = try takeFloat(reader);
 
-    inline for (.{ &replay.frames, &replay.notes, &replay.walls, &replay.heights  , &replay.pauses },
-                .{ .frames       , .notes       , .walls       , .heights         , .pauses },
-                .{ ReplayFrame   , NoteEvent    , WallEvent    , HeightChangeEvent, PauseEvent },
-                .{ takeFrame     , takeNoteEvent, takeWallEvent, takeHeightEvent  , takePauseEvent} ) |array, section, ItemType, parseFunction| {
+    inline for (.{ &replay.frames, &replay.notes, &replay.walls, &replay.heights, &replay.pauses }, .{ .frames, .notes, .walls, .heights, .pauses }, .{ Frame, NoteEvent, WallEvent, HeightChangeEvent, PauseEvent }, .{ takeFrame, takeNoteEvent, takeWallEvent, takeHeightEvent, takePauseEvent }) |array, section, ItemType, parseFunction| {
         if (try getSection(reader) != section) {
             return error.InvalidSectionStartByte;
         }
