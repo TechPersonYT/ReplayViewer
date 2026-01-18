@@ -316,8 +316,8 @@ fn timeRangeToSliceRange(start_time: f32, end_time: f32, times: []f32) struct { 
     return .{ lower, upper };
 }
 
-fn timeSliceMulti(start_time: f32, end_time: f32, multi_slice: anytype) @TypeOf(multi_slice) {
-    const first, const len = timeRangeToSliceRange(start_time, end_time, multi_slice.items(.time));
+fn timeSliceMulti(start_time: f32, end_time: f32, multi_slice: anytype, time_field: anytype) @TypeOf(multi_slice) {
+    const first, const len = timeRangeToSliceRange(start_time, end_time, multi_slice.items(time_field));
 
     if (first) |f| {
         if (len) |l| return multi_slice.subslice(f, l)
@@ -542,27 +542,23 @@ pub fn main() !void {
             const view_end_time: f32 = replay_time + lookahead;
             const actual_height = if (replay.height <= 0.05) replay.heights.items(.height)[0] else replay.height;
 
-            const replay_notes = timeSliceMulti(view_start_time, view_end_time, replay_note_slices);
+            const replay_notes = timeSliceMulti(view_start_time, view_end_time, replay_note_slices, .event_time);
             //const replay_bombs = timeSliceMulti(view_start_time, view_end_time, replay_bomb_slices);
 
             const jump_speed = map_info.jump_speeds.items[map_info.jump_speeds.items.len - 1];
 
-            for (replay_notes.items(.time),
-                 replay_notes.items(.spawn_time),
-                 replay_notes.items(.line_index),
-                 replay_notes.items(.line_layer),
+            for (replay_notes.items(.placement),
+                 replay_notes.items(.event_time),
                  replay_notes.items(.cut_direction),
                  replay_notes.items(.cut_info),
-                 replay_notes.items(.color)) |event_time,
-                                              spawn_time,
-                                              line_index,
-                                              line_layer,
+                 replay_notes.items(.color)) |placement,
+                                              event_time,
                                               note_direction,
                                               cut_info,
                                               note_color| {
-                const z_time = computeTimedNoteZ(replay_time, spawn_time, replay.jump_distance, jump_speed);
+                const z_time = computeTimedNoteZ(replay_time, placement.time, replay.jump_distance, jump_speed);
 
-                const note_position = computeNotePosition(line_index, line_layer, z_time, actual_height);
+                const note_position = computeNotePosition(placement.line_index, placement.line_layer, z_time, actual_height);
                 const note_transform = computeNoteTransform(note_position, note_direction);
 
                 if (replay_time < event_time) {
@@ -570,7 +566,7 @@ pub fn main() !void {
                 }
 
                 if (cut_info) |info| {
-                    const frozen_note_position: rl.Vector3 = .init(note_position.x, note_position.y, computeTimedNoteZ(event_time, spawn_time, replay.jump_distance, jump_speed));
+                    const frozen_note_position: rl.Vector3 = .init(note_position.x, note_position.y, computeTimedNoteZ(event_time, placement.time, replay.jump_distance, jump_speed));
 
                     // Postcut animation
                     if (replay_time > event_time) {
@@ -610,7 +606,7 @@ pub fn main() !void {
         const sample_end_time = replay_time;
 
         //const sampled_frames = timeSliceMulti(sample_start_time, sample_end_time);
-        const sampled_notes = timeSliceMulti(sample_start_time, sample_end_time, replay_note_slices);
+        const sampled_notes = timeSliceMulti(sample_start_time, sample_end_time, replay_note_slices, .event_time);
 
         // Cut scores
         var cut_scores_left: std.ArrayList(f32) = .{};
@@ -622,7 +618,7 @@ pub fn main() !void {
         var score_times: std.ArrayList(f32) = .{};
         defer score_times.deinit(allocator);
 
-        for (sampled_notes.items(.time),
+        for (sampled_notes.items(.event_time),
              sampled_notes.items(.cut_info),
              sampled_notes.items(.color)) |time, cut_info, color| {
             if (cut_info) |cut| {

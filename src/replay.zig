@@ -3,6 +3,7 @@ const log = std.log.scoped(.replay);
 const rl = @import("raylib");
 const NoteColor = @import("common.zig").NoteColor;
 const CutDirection = @import("common.zig").CutDirection;
+const Placement = @import("common.zig").Placement;
 
 const FileSection = enum(u8) {
     info,
@@ -87,13 +88,11 @@ pub const CutInfo = struct {
 };
 
 pub const NoteEvent = struct {
+    placement: Placement,
     scoring_type: ScoringType,
-    line_index: i32,
-    line_layer: i32,
     color: NoteColor,
     cut_direction: CutDirection,
-    time: f32,
-    spawn_time: f32,
+    event_time: f32,
     event_type: EventType,
     cut_info: ?CutInfo,
 };
@@ -333,13 +332,15 @@ fn takeNoteEvent(reader: *std.Io.Reader) !NoteEvent {
     const event_type: EventType = @enumFromInt(try takeInt(reader));
 
     return .{
+        .placement = .{
+            .time = spawn_time,
+            .line_index = line_index,
+            .line_layer = line_layer,
+        },
         .scoring_type = @enumFromInt(scoring_type),
-        .line_index = line_index,
-        .line_layer = line_layer,
         .color = @enumFromInt(color),
         .cut_direction = @enumFromInt(direction),
-        .time = event_time,
-        .spawn_time = spawn_time,
+        .event_time = event_time,
         .event_type = event_type,
         .cut_info = switch (event_type) {
             .good, .bad => try takeCutInfo(reader),

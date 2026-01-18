@@ -2,18 +2,12 @@ const std = @import("std");
 const log = std.log.scoped(.map);
 const NoteColor = @import("common.zig").NoteColor;
 const CutDirection = @import("common.zig").CutDirection;
+const Placement = @import("common.zig").Placement;
 
 const Version = struct {
     major: u8,
     minor: u8,
     revision: u8,
-};
-
-pub const Placement = struct {
-    time: f32 = 0.0,
-    line_index: i32 = 0,
-    line_layer: i32 = 0,
-    rotation_lane: ?i32 = null,
 };
 
 pub const Note = struct {

@@ -19,3 +19,10 @@ pub const CutDirection = enum(i32) {
 
     _,
 };
+
+pub const Placement = struct {
+    time: f32 = 0.0,
+    line_index: i32 = 0,
+    line_layer: i32 = 0,
+    rotation_lane: ?i32 = null,
+};
