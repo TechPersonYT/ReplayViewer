@@ -2,6 +2,7 @@ const std = @import("std");
 const rl = @import("raylib");
 const rp = @import("replay.zig");
 const io = @import("io.zig");
+const vs = @import("visual.zig");
 const tweens = @import("tweens.zig");
 const common = @import("common.zig");
 
@@ -228,29 +229,6 @@ fn getNoteColor(color: common.NoteColor) rl.Color {
 
         else => .magenta,
     };
-}
-
-fn computeNoteTransform(note_position: rl.Vector3, note_direction: common.CutDirection) rl.Matrix {
-    return rl.Matrix.multiply(switch (note_direction) {
-        .up => rl.Matrix.identity(),
-        .down => rl.Matrix.rotateZ(std.math.pi),
-        .left => rl.Matrix.rotateZ(std.math.pi * -0.5),
-        .right => rl.Matrix.rotateZ(std.math.pi * 0.5),
-
-        .up_left => rl.Matrix.rotateZ(std.math.pi * -0.25),
-        .up_right => rl.Matrix.rotateZ(std.math.pi * 0.25),
-        .down_left => rl.Matrix.rotateZ(std.math.pi * -0.75),
-        .down_right => rl.Matrix.rotateZ(std.math.pi * 0.75),
-
-        else => rl.Matrix.identity(),
-    }, rl.Matrix.translate(note_position.x, note_position.y, note_position.z));
-}
-
-fn computeNotePosition(line_index: i32, line_layer: i32, z: f32, height: f32) rl.Vector3 {
-    const line_index_f = 1.5 - @as(f32, @floatFromInt(line_index));
-    const line_layer_f: f32 = @floatFromInt(line_layer);
-
-    return .init(line_index_f * UNITS_TO_METERS, line_layer_f * UNITS_TO_METERS + height - 1.0, z);
 }
 
 fn computeTimedNoteZ(replay_time: f32, spawn_time: f32, jump_distance: f32, jump_speed: f32) f32 {
@@ -541,6 +519,7 @@ pub fn main() !void {
             const view_start_time: f32 = replay_time - lookbehind;
             const view_end_time: f32 = replay_time + lookahead;
             const actual_height = if (replay.height <= 0.05) replay.heights.items(.height)[0] else replay.height;
+            _ = actual_height;
 
             const replay_notes = timeSliceMulti(view_start_time, view_end_time, replay_note_slices, .event_time);
             //const replay_bombs = timeSliceMulti(view_start_time, view_end_time, replay_bomb_slices);
@@ -557,9 +536,12 @@ pub fn main() !void {
                                               cut_info,
                                               note_color| {
                 const z_time = computeTimedNoteZ(replay_time, placement.time, replay.jump_distance, jump_speed);
+                _ = z_time;
 
-                const note_position = computeNotePosition(placement.line_index, placement.line_layer, z_time, actual_height);
-                const note_transform = computeNoteTransform(note_position, note_direction);
+                const jump_info = vs.getNoteJumpInfo2(jump_speed, replay.jump_distance);
+                const note_transform = vs.getTimedNotePose(placement, note_direction, replay_time, jump_info, false);
+                const note_position = rl.Vector3.transform(.init(0.0, 0.0, 0.0), note_transform);
+                //const note_position = computeNotePosition(placement.line_index, placement.line_layer, z_time, actual_height);
 
                 if (replay_time < event_time) {
                     drawNote(&note_mesh, &red_note_material, &red_note_dot_material, &blue_note_material, &blue_note_dot_material, note_color, note_transform, note_direction);
