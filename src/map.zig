@@ -174,6 +174,15 @@ fn getJsonEnum(T: type, map: std.json.ObjectMap, key: []const u8) ?T {
     } else null;
 }
 
+fn getJsonString(map: std.json.ObjectMap, key: []const u8, allocator: std.mem.Allocator) !?[]u8 {
+    return if (map.get(key)) |value| {
+        return switch (value) {
+            .string => |string| return try allocator.dupe(u8, string),
+            else => null,
+        };
+    } else null;
+}
+
 fn parseNotes(root: std.json.ObjectMap, version: Version, allocator: std.mem.Allocator) !std.MultiArrayList(Note) {
     log.debug("Parsing map notes", .{});
 
@@ -274,49 +283,6 @@ fn parseBombs(root: std.json.ObjectMap, version: Version, allocator: std.mem.All
 
 // TODO: Parse walls
 
-fn parseJumpSpeeds(root: std.json.ObjectMap, version: Version, allocator: std.mem.Allocator) !std.ArrayList(f32) {
-    var speeds: std.ArrayList(f32) = .empty;
-
-    errdefer speeds.deinit(allocator);
-
-    switch (version.major) {
-        2 => {
-            const sets = getJsonArrayOrEmpty(root, "_difficultyBeatmapSets");
-
-            for (sets) |set| {
-                switch (set) {
-                    .object => |s| {
-                        const maps = getJsonArrayOrEmpty(s, "_difficultyBeatmaps");
-
-                        for (maps) |map| {
-                            switch (map) {
-                                .object => |o| try speeds.append(allocator, getJsonNumber(f32, o, "_noteJumpMovementSpeed") orelse return error.NoV2JumpMovementSpeed),
-                                else => return error.UnexpectedMapType,
-                            }
-                        }
-                    },
-                    else => return error.UnexpectedSetType,
-                }
-            }
-        },
-        4 => {
-            const sets = getJsonArrayOrEmpty(root, "difficultyBeatmaps");
-
-            for (sets) |set| {
-                switch (set) {
-                    .object => |s| {
-                        try speeds.append(allocator, getJsonNumber(f32, s, "noteJumpMovementSpeed") orelse return error.NoV4JumpMovementSpeed);
-                    },
-                    else => return error.UnexpectedSetType,
-                }
-            }
-        },
-        else => return error.InvalidMapInfoVersion,
-    }
-
-    return speeds;
-}
-
 pub const Map = struct {
     notes: std.MultiArrayList(Note),
     bombs: std.MultiArrayList(Bomb),
@@ -328,12 +294,104 @@ pub const Map = struct {
     }
 };
 
+pub const DifficultyRank = enum(u8) {
+    Easy = 1,
+    Normal = 3,
+    Hard = 5,
+    Expert = 7,
+    ExpertPlus = 9,
+    _,
+
+    pub fn fromString(s: []const u8) DifficultyRank {
+        if (std.mem.eql(u8, s, "Easy")) return .Easy;
+        if (std.mem.eql(u8, s, "Normal")) return .Normal;
+        if (std.mem.eql(u8, s, "Hard")) return .Hard;
+        if (std.mem.eql(u8, s, "Expert")) return .Expert;
+        if (std.mem.eql(u8, s, "ExpertPlus")) return .ExpertPlus;
+
+        return .ExpertPlus;
+    }
+};
+
+pub const MapCharacteristic = enum {
+    Standard,
+    NoArrows,
+    OneSaber,
+    ThreeSixtyDegree,
+    NinetyDegree,
+    Legacy,
+
+    Unknown,
+
+    pub fn fromString(s: []const u8) MapCharacteristic {
+        if (std.mem.eql(u8, s, "Standard")) return .Standard;
+        if (std.mem.eql(u8, s, "NoArrows")) return .NoArrows;
+        if (std.mem.eql(u8, s, "OneSaber")) return .OneSaber;
+        if (std.mem.eql(u8, s, "360Degree")) return .ThreeSixtyDegree;
+        if (std.mem.eql(u8, s, "90Degree")) return .NinetyDegree;
+        if (std.mem.eql(u8, s, "Legacy")) return .Legacy;
+
+        return .Unknown;
+    }
+};
+
+pub const DifficultyInfo = struct {
+    filename: []u8,
+    characteristic: MapCharacteristic,
+    rank: ?DifficultyRank,
+    mappers: std.ArrayList([]u8),
+    lighters: std.ArrayList([]u8),
+    njs: f32,
+    nso: f32,
+
+    pub fn deinit(self: *DifficultyInfo, allocator: std.mem.Allocator) void {
+        log.debug("DifficultyInfo.deinit()", .{});
+        allocator.free(self.filename);
+
+        for (self.mappers.items) |mapper| {
+            allocator.free(mapper);
+        }
+
+        self.mappers.deinit(allocator);
+
+        for (self.lighters.items) |lighter| {
+            allocator.free(lighter);
+        }
+
+        self.lighters.deinit(allocator);
+    }
+};
+
 pub const MapInfo = struct {
-    jump_speeds: std.ArrayList(f32),
+    song_title: []u8,
+    song_subtitle: []u8,
+    song_author: []u8,
+    song_filename: []u8,
+    cover_image_filename: []u8,
+    bpm: f32,
+    lufs: ?f32 = null,
+    duration: ?f32 = null,
+
+    // Deprecated in v4 (thank goodness); rather than support these properly we throw a big fat warning
+    song_time_offset: ?f32 = null,
+    shuffle: ?f32 = null,
+    shuffle_period: ?f32 = null,
+
+    difficulties: std.ArrayList(DifficultyInfo),
 
     pub fn deinit(self: *MapInfo, allocator: std.mem.Allocator) void {
         log.debug("MapInfo.deinit()", .{});
-        self.jump_speeds.deinit(allocator);
+        allocator.free(self.song_title);
+        allocator.free(self.song_subtitle);
+        allocator.free(self.song_author);
+        allocator.free(self.song_filename);
+        allocator.free(self.cover_image_filename);
+
+        for (self.difficulties.items) |*difficulty| {
+            difficulty.deinit(allocator);
+        }
+
+        self.difficulties.deinit(allocator);
     }
 };
 
@@ -399,5 +457,222 @@ pub fn parseInfo(data: []const u8, allocator: std.mem.Allocator) !MapInfo {
     const root = json.value.object;
     const version = parseVersion(root) orelse return error.NoVersionFound;
 
-    return .{ .jump_speeds = try parseJumpSpeeds(root, version, allocator) };
+    return switch (version.major) {
+        2 => outer: {
+            const song_title = try getJsonString(root, "_songName", allocator) orelse return error.NoV2SongTitle;
+            errdefer allocator.free(song_title);
+
+            const song_subtitle = try getJsonString(root, "_songSubName", allocator) orelse return error.NoV2SongSubtitle;
+            errdefer allocator.free(song_subtitle);
+
+            const song_author = try getJsonString(root, "_songAuthorName", allocator) orelse return error.NoV2SongAuthor;
+            errdefer allocator.free(song_author);
+
+            const song_filename = try getJsonString(root, "_songFilename", allocator) orelse return error.NoV2SongFilename;
+            errdefer allocator.free(song_filename);
+
+            const cover_image_filename = try getJsonString(root, "_coverImageFilename", allocator) orelse return error.NoV2CoverImageFilename;
+            errdefer allocator.free(cover_image_filename);
+
+            const song_time_offset = getJsonNumber(f32, root, "_songTimeOffset");
+            if (song_time_offset) |_| log.warn("V2 song time offset is present, but deprecated. It will not be handled properly", .{});
+
+            const song_shuffle = getJsonNumber(f32, root, "_shuffle");
+            if (song_shuffle) |_| log.warn("V2 song shuffle is present, but deprecated. It will not be handled properly", .{});
+
+            const bpm = getJsonNumber(f32, root, "_beatsPerMinute") orelse return error.NoV2SongBPM;
+
+            const difficulty_sets = getJsonArrayOrEmpty(root, "_difficultyBeatmapSets");
+            var difficulty_infos: std.ArrayList(DifficultyInfo) = .{};
+            errdefer difficulty_infos.deinit(allocator);
+
+            const author = try getJsonString(root, "_levelAuthorName", allocator) orelse return error.NoV2LevelAuthor;
+            defer allocator.free(author);
+
+            for (difficulty_sets) |set| {
+                switch (set) {
+                    .object => |o| {
+                        const difficulties = getJsonArrayOrEmpty(o, "_difficultyBeatmaps");
+
+                        const characteristic_str = try getJsonString(o, "_beatmapCharacteristicName", allocator) orelse return error.NoV2DifficultyCharacteristic;
+                        defer allocator.free(characteristic_str);
+                        const characteristic = MapCharacteristic.fromString(characteristic_str);
+
+                        for (difficulties) |difficulty| {
+                            switch (difficulty) {
+                                .object => |d| {
+                                    const difficulty_rank_str = try getJsonString(d, "_difficulty", allocator) orelse return error.NoV2DifficultyLabel;
+                                    defer allocator.free(difficulty_rank_str);
+                                    const difficulty_rank = DifficultyRank.fromString(difficulty_rank_str);
+
+                                    const njs = getJsonNumber(f32, d, "_noteJumpMovementSpeed") orelse return error.NoV2DifficultyNJS;
+                                    const nso = getJsonNumber(f32, d, "_noteJumpStartBeatOffset") orelse return error.NoV2DifficultyNSO;
+
+                                    const filename = try getJsonString(d, "_beatmapFilename", allocator) orelse return error.NoV2DifficultyFilename;
+                                    errdefer allocator.free(filename);
+
+                                    const author_dupe = try allocator.dupe(u8, author);
+                                    errdefer allocator.free(author_dupe);
+
+                                    var synthetic_mappers: std.ArrayList([]u8) = .{};
+                                    errdefer synthetic_mappers.deinit(allocator);
+                                    try synthetic_mappers.append(allocator, author_dupe);
+
+                                    const author_dupe_2 = try allocator.dupe(u8, author);
+                                    errdefer allocator.free(author_dupe_2);
+
+                                    var synthetic_lighters: std.ArrayList([]u8) = .{};
+                                    errdefer synthetic_lighters.deinit(allocator);
+                                    try synthetic_lighters.append(allocator, author_dupe_2);
+
+                                    try difficulty_infos.append(allocator, .{
+                                        .filename = filename,
+                                        .characteristic = characteristic,
+                                        .rank = difficulty_rank,
+                                        .mappers = synthetic_mappers,
+                                        .lighters = synthetic_lighters,
+                                        .njs = njs,
+                                        .nso = nso,
+                                    });
+                                },
+                                else => return error.InvalidV2DifficultyBeatmapType,
+                            }
+
+                        }
+                    },
+                    else => return error.InvalidV2DifficultySetType,
+                }
+            }
+
+            break :outer .{
+                .song_title = song_title,
+                .song_subtitle = song_subtitle,
+                .song_author = song_author,
+                .song_filename = song_filename,
+                .cover_image_filename = cover_image_filename,
+                .song_time_offset = song_time_offset,
+                .bpm = bpm,
+                .difficulties = difficulty_infos,
+            };
+        },
+        4 => outer: {
+            const song_root = if (root.get("song")) |song| blk: {
+                switch (song) {
+                    .object => |o| break :blk o,
+                    else => return error.InvalidV4SongInfoType,
+                }
+            } else return error.NoV4SongInfo;
+
+            const song_title = try getJsonString(song_root, "title", allocator) orelse return error.NoV4SongTitle;
+            errdefer allocator.free(song_title);
+
+            const song_subtitle = try getJsonString(song_root, "subTitle", allocator) orelse return error.NoV4SongSubtitle;
+            errdefer allocator.free(song_subtitle);
+
+            const song_author = try getJsonString(song_root, "author", allocator) orelse return error.NoV4SongAuthor;
+            errdefer allocator.free(song_author);
+
+            const audio_root = if (root.get("audio")) |audio| blk: {
+                switch (audio) {
+                    .object => |a| break :blk a,
+                    else => return error.InvalidV4AudioType,
+                }
+            } else return error.NoV4Audio;
+
+            const song_filename = try getJsonString(audio_root, "songFilename", allocator) orelse return error.NoV4SongFilename;
+            errdefer allocator.free(song_filename);
+
+            const bpm = getJsonNumber(f32, audio_root, "bpm") orelse return error.NoV4SongBPM;
+            const lufs = getJsonNumber(f32, audio_root, "lufs");
+            const duration = getJsonNumber(f32, audio_root, "songDuration");
+
+            const cover_image_filename = try getJsonString(root, "coverImageFilename", allocator) orelse return error.NoV4CoverImageFilename;
+            errdefer allocator.free(cover_image_filename);
+
+            const difficulties = getJsonArrayOrEmpty(root, "difficultyBeatmaps");
+            var difficulty_infos: std.ArrayList(DifficultyInfo) = .{};
+            errdefer difficulty_infos.deinit(allocator);
+
+            for (difficulties) |difficulty| {
+                switch (difficulty) {
+                    .object => |o| {
+                        const characteristic_str = try getJsonString(o, "characteristic", allocator) orelse return error.NoV4DifficultyCharacteristic;
+                        defer allocator.free(characteristic_str);
+                        const characteristic = MapCharacteristic.fromString(characteristic_str);
+
+                        const difficulty_rank_str = try getJsonString(o, "difficulty", allocator) orelse return error.NoV4DifficultyLabel;
+                        defer allocator.free(difficulty_rank_str);
+                        const difficulty_rank = DifficultyRank.fromString(difficulty_rank_str);
+
+                        const njs = getJsonNumber(f32, o, "noteJumpMovementSpeed") orelse return error.NoV4DifficultyNJS;
+                        const nso = getJsonNumber(f32, o, "noteJumpStartBeatOffset") orelse return error.NoV4DifficultyNSO;
+
+                        const filename = try getJsonString(o, "beatmapDataFilename", allocator) orelse return error.NoV4DifficultyFilename;
+                        errdefer allocator.free(filename);
+
+                        const authors = if (o.get("beatmapAuthors")) |authors| blk: {
+                            switch (authors) {
+                                .object => |a| break :blk a,
+                                else => return error.InvalidV4DifficultyAuthorsType,
+                            }
+                        } else return error.NoV4DifficultyAuthors;
+                        const mappers = getJsonArrayOrEmpty(authors, "mappers");
+                        const lighters = getJsonArrayOrEmpty(authors, "lighters");
+
+                        var mappers_owned: std.ArrayList([]u8) = .{};
+                        errdefer mappers_owned.deinit(allocator);
+
+                        for (mappers) |mapper| {
+                            switch (mapper) {
+                                .string => |s| {
+                                    const owned = try allocator.dupe(u8, s);
+                                    errdefer allocator.free(owned);
+                                    try mappers_owned.append(allocator, owned);
+                                },
+                                else => return error.InvalidV4MapperType,
+                            }
+                        }
+
+                        var lighters_owned: std.ArrayList([]u8) = .{};
+                        errdefer lighters_owned.deinit(allocator);
+
+                        for (lighters) |lighter| {
+                            switch (lighter) {
+                                .string => |s| {
+                                    const owned = try allocator.dupe(u8, s);
+                                    errdefer allocator.free(owned);
+                                    try lighters_owned.append(allocator, owned);
+                                },
+                                else => return error.InvalidV4LighterType,
+                            }
+                        }
+
+                        try difficulty_infos.append(allocator, .{
+                            .filename = filename,
+                            .characteristic = characteristic,
+                            .rank = difficulty_rank,
+                            .mappers = mappers_owned,
+                            .lighters = lighters_owned,
+                            .njs = njs,
+                            .nso = nso,
+                        });
+                    },
+                    else => return error.InvalidV4DifficultyInfoType,
+                }
+            }
+
+            break :outer .{
+                .song_title = song_title,
+                .song_subtitle = song_subtitle,
+                .song_author = song_author,
+                .song_filename = song_filename,
+                .cover_image_filename = cover_image_filename,
+                .bpm = bpm,
+                .lufs = lufs,
+                .duration = duration,
+                .difficulties = difficulty_infos,
+            };
+        },
+        else => return error.InvalidMapInfoVersion,
+    };
 }

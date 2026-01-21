@@ -19,7 +19,7 @@ const NoteJumpInfo = struct {
 };
 
 // Thanks Mawntee! https://discord.com/channels/864661281268039700/864661281730330626/1436597181300609045
-pub fn getNoteJumpInfo(njs: f32, njo: f32, bpm: f32) NoteJumpInfo {
+pub fn getNoteJumpInfo(njs: f32, nso: f32, bpm: f32) NoteJumpInfo {
     const start_half_jump_duration = 4.0;
     const max_half_jump_duration = 18.0 - 0.001;
     const beat_duration = 60.0 / bpm;
@@ -34,7 +34,7 @@ pub fn getNoteJumpInfo(njs: f32, njo: f32, bpm: f32) NoteJumpInfo {
         half_jump_duration *= 0.5;
     }
 
-    half_jump_duration += njo;
+    half_jump_duration += nso;
     half_jump_duration = @max(0.25, half_jump_duration);
 
     const jump_duration = half_jump_duration * 2.0 * beat_duration;
@@ -56,7 +56,7 @@ pub fn getNoteJumpInfo2(njs: f32, jump_distance: f32) NoteJumpInfo {
     };
 }
 
-pub fn getTimedNotePose(placement: Placement, direction: CutDirection, time: f32, jump_info: NoteJumpInfo, crossover: bool) rl.Matrix {
+pub fn getTimedNotePose(placement: Placement, direction: CutDirection, time: f32, jump_info: NoteJumpInfo, crossover: bool) struct { rl.Vector3, rl.Matrix } {
     const final_rotation: f32 = switch (direction) {
         .up => 0.0,
         .down => std.math.pi,
@@ -87,6 +87,10 @@ pub fn getTimedNotePose(placement: Placement, direction: CutDirection, time: f32
 
     const z = if (unclamped_jump_progress < 0.0) std.math.lerp(jump_info.jump_distance, 100.0, unclamped_jump_progress * -1.0) else std.math.lerp(jump_info.jump_distance, 0.0, tweens.easeOutQuad(unclamped_jump_progress * 2.0));
 
+    const position: rl.Vector3 = .init(x * UNITS_TO_METERS, y * UNITS_TO_METERS + 1.0, z * UNITS_TO_METERS);
+
     // TODO: Notes should yaw rotate to look at the player during the jump
-    return rl.Matrix.multiply(rl.Matrix.rotateZ(rotation), rl.Matrix.translate(x * UNITS_TO_METERS, y * UNITS_TO_METERS + 1.0, z * UNITS_TO_METERS));
+    const m = rl.Matrix.multiply(rl.Matrix.rotateZ(rotation), rl.Matrix.translate(position.x, position.y, position.z));
+
+    return .{ position, m };
 }
