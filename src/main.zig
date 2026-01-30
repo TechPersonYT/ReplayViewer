@@ -524,7 +524,8 @@ pub fn main() !void {
             const replay_notes = timeSliceMulti(view_start_time, view_end_time, replay_note_slices, .event_time);
             //const replay_bombs = timeSliceMulti(view_start_time, view_end_time, replay_bomb_slices);
 
-            const jump_speed = map_info.difficulties.items[map_info.difficulties.items.len - 1].njs;
+            const njs = map_info.difficulties.items[map_info.difficulties.items.len - 1].njs;
+            const nso = map_info.difficulties.items[map_info.difficulties.items.len - 1].nso;
 
             for (replay_notes.items(.placement),
                  replay_notes.items(.event_time),
@@ -536,7 +537,7 @@ pub fn main() !void {
                                               cut_info,
                                               note_color| {
 
-                const jump_info = vs.getNoteJumpInfo2(jump_speed, replay.jump_distance);
+                const jump_info = vs.NoteJumpInfo.fromSpeedOffsetBpm(njs, nso, map_info.bpm);
                 const note_position, const note_transform = vs.getTimedNotePose(placement, note_direction, replay_time, jump_info, false);
                 //const note_position = computeNotePosition(placement.line_index, placement.line_layer, z_time, actual_height);
 
@@ -545,7 +546,7 @@ pub fn main() !void {
                 }
 
                 if (cut_info) |info| {
-                    const frozen_note_position: rl.Vector3 = .init(note_position.x, note_position.y, computeTimedNoteZ(event_time, placement.time, replay.jump_distance, jump_speed));
+                    const frozen_note_position: rl.Vector3 = .init(note_position.x, note_position.y, computeTimedNoteZ(event_time, placement.time, replay.jump_distance, njs));
 
                     // Postcut animation
                     if (replay_time > event_time) {
