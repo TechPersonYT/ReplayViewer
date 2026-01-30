@@ -76,18 +76,15 @@ pub fn getTimedNotePose(placement: Placement, direction: CutDirection, time: f32
     const rotation_progress = @min(jump_progress * 8.0, 1.0);
     const rotation = std.math.lerp(std.math.pi, final_rotation, tweens.easeOutQuad(rotation_progress));
 
-    const final_x: f32 = 1.5 - @as(f32, @floatFromInt(placement.line_index));
-    const final_y: f32 = @floatFromInt(placement.line_layer);
-
     const flip_progress = @min(jump_progress * 4.0, 1.0);
-    const x = if (crossover) std.math.lerp(-final_x, final_x, tweens.easeOutQuad(flip_progress)) else final_x;
+    const x = if (crossover) std.math.lerp(-placement.x, placement.x, tweens.easeOutQuad(flip_progress)) else placement.x;
 
     const half_jump_progress = @min(jump_progress * 2.0, 1.0);
-    const y = std.math.lerp(0.0, final_y, tweens.easeOutQuad(half_jump_progress));
+    const y = std.math.lerp(0.0, placement.y, tweens.easeOutQuad(half_jump_progress));
 
     const z = if (unclamped_jump_progress < 0.0) std.math.lerp(jump_info.jump_distance, 100.0, unclamped_jump_progress * -1.0) else std.math.lerp(jump_info.jump_distance, 0.0, tweens.easeOutQuad(unclamped_jump_progress * 2.0));
 
-    const position: rl.Vector3 = .init(x * UNITS_TO_METERS, y * UNITS_TO_METERS + 1.0, z * UNITS_TO_METERS);
+    const position: rl.Vector3 = .init(x * UNITS_TO_METERS, y * UNITS_TO_METERS + UNITS_TO_METERS - 1.0, z * UNITS_TO_METERS);
 
     // TODO: Notes should yaw rotate to look at the player during the jump
     const m = rl.Matrix.multiply(rl.Matrix.rotateZ(rotation), rl.Matrix.translate(position.x, position.y, position.z));

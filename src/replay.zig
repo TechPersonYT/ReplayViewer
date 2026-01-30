@@ -332,11 +332,7 @@ fn takeNoteEvent(reader: *std.Io.Reader) !NoteEvent {
     const event_type: EventType = @enumFromInt(try takeInt(reader));
 
     return .{
-        .placement = .{
-            .time = spawn_time,
-            .line_index = line_index,
-            .line_layer = line_layer,
-        },
+        .placement = .fromTil(spawn_time, line_index, line_layer),
         .scoring_type = @enumFromInt(scoring_type),
         .color = @enumFromInt(color),
         .cut_direction = @enumFromInt(direction),

@@ -42,12 +42,12 @@ fn parsePlacement(version: Version, object: std.json.ObjectMap) !Placement {
         else => return error.UnknownMajorVersion,
     };
 
-    return .{
-        .time = getJsonNumber(f32, object, time_field) orelse 0.0,
-        .line_index = getJsonNumber(i32, object, line_index_field) orelse 0,
-        .line_layer = getJsonNumber(i32, object, line_layer_field) orelse 0,
-        .rotation_lane = getJsonNumber(i32, object, rotation_field),
-    };
+    const time = getJsonNumber(f32, object, time_field) orelse 0.0;
+    const line_index = getJsonNumber(i32, object, line_index_field) orelse 0;
+    const line_layer = getJsonNumber(i32, object, line_layer_field) orelse 0;
+    const rotation_lane = getJsonNumber(i32, object, rotation_field);
+
+    return Placement.fromTilr(time, line_index, line_layer, rotation_lane);
 }
 
 fn parseNote(version: Version, note: std.json.ObjectMap) !Note {

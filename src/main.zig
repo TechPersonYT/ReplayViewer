@@ -15,7 +15,7 @@ const GRAPH_HEIGHT: i32 = 200;
 const GRAPH_X: i32 = 0;
 const GRAPH_Y: i32 = 0;
 
-const CUBE_SIDE_LENGTH: f32 = 0.4;
+const CUBE_SIDE_LENGTH: f32 = 0.5;
 const CUBE_SIZE: rl.Vector3 = .{ .x = CUBE_SIDE_LENGTH, .y = CUBE_SIDE_LENGTH, .z = CUBE_SIDE_LENGTH };
 
 const CUT_VISUAL_LENGTH: f32 = 0.5;
@@ -535,8 +535,6 @@ pub fn main() !void {
                                               note_direction,
                                               cut_info,
                                               note_color| {
-                const z_time = computeTimedNoteZ(replay_time, placement.time, replay.jump_distance, jump_speed);
-                _ = z_time;
 
                 const jump_info = vs.getNoteJumpInfo2(jump_speed, replay.jump_distance);
                 const note_position, const note_transform = vs.getTimedNotePose(placement, note_direction, replay_time, jump_info, false);
@@ -558,7 +556,7 @@ pub fn main() !void {
                         const score_color = withAlpha(getHSVColor(score), fade_color.a);
 
                         rl.drawLine3D(frozen_note_position, toRaylib(info.cut_point), withAlpha(.red, fade_color.a));
-                        rl.drawCubeWiresV(frozen_note_position, CUBE_SIZE, withAlpha(getNoteColor(note_color), fade_color.a));
+                        //rl.drawCubeWiresV(frozen_note_position, CUBE_SIZE, withAlpha(getNoteColor(note_color), fade_color.a));
 
                         const cut_direction = rl.Vector3.init(info.cut_normal.x, info.cut_normal.y, 0.0).perpendicular().negate().normalize();
                         rl.drawLine3D(toRaylib(info.cut_point), toRaylib(info.cut_point.add(cut_direction.scale(@min(CUT_VISUAL_LENGTH, (replay_time - event_time) * info.saber_speed)))), fade_color);
